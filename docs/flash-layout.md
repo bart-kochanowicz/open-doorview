@@ -51,3 +51,6 @@ Before any backup or modification:
 - Never modify or erase partitions without proper permission
 - Always use official toolchain (flashrom)
 - Verify all backup operations produce consistent hashes
+
+## Recovery Workflow Integration
+This layout information is used during Phase B (Flash Backup) and Phase C (Firmware Analysis) of the recovery workflow.

@@ -24,12 +24,7 @@
 make discover-ports
 ```
 
-### Step 2: Set up Serial Capture
-```bash
-make serial-setup
-```
-
-### Step 3: Start UART Logging (Manual)
+### Step 2: Start UART Logging (Manual)
 ```bash
 make uart-logs
 ```
@@ -38,13 +33,13 @@ make uart-logs
 > picocom -b 115200 /dev/cu.usbserial-XXXX
 > ```
 
-### Step 4: Backup Flash Memory
+### Step 3: Backup Flash Memory
 ```bash
 make backup-flash
 ```
 > **Important:** Ensure you've disconnected battery and USB power before proceeding. Read safety rules in AGENTS.md.
 
-### Step 5: Analyze Firmware
+### Step 4: Analyze Firmware
 ```bash
 make analyze-firmware
 ```
@@ -56,21 +51,14 @@ make analyze-firmware
 ├── Makefile                # Main project automation
 ├── USAGE.md               # This file
 ├── AGENTS.md              # Safety rules and procedures
-├── README.md              # Project overview
+├── README.md              # Project overview  
 ├── docs/                  # Documentation
 │   ├── hardware-inventory.md
-│   ├── uart-pinout.md
-│   ├── boot-analysis.md
-│   └── roadmap.md
-├── tools/                 # Automation scripts
-│   ├── discover-serial-ports.sh
-│   ├── serial-capture-setup.sh
-│   ├── toolchain-check.sh
-│   └── install-tools.sh
-├── firmware/              # Firmware related files
+│   └── uart-pinout.md
+├── tools/                 # Automation scripts (empty - managed by Makefile)
 ├── backups/               # Backup storage (created by setup)
 ├── logs/                  # Log storage (created by setup)
-└── integrations/          # Integration files (created by setup)
+└── firmware/              # Custom firmware development
 ```
 
 ## Safety Reminder
@@ -93,12 +81,3 @@ make install-tools  # macOS only
 # On macOS, you might need to use: /dev/tty.usbserial-XXXX instead of /dev/cu.usbserial-XXXX
 ls -la /dev/tty.*
 ```
-
-## Contributing
-
-This project is organized for the recovery and custom firmware development of the RH-PD10 smart door peephole camera. Please follow the established phases in the roadmap:
-1. Phase A: Serial diagnostics 
-2. Phase B: Flash backup
-3. Phase C: Firmware analysis
-4. Phase D: Custom firmware development
-5. Phase E: Home Assistant integration
