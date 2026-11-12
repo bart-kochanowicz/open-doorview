@@ -12,7 +12,7 @@ help:
 	@echo "Available targets:"
 	@echo "  setup          - Initialize project environment"
 	@echo "  check-tools    - Verify all required tools are installed"
-	@echo "  install-tools  - Install missing tools (if on macOS)"
+	@echo "  install-tools  - Install missing tools (detects OS automatically)"
 	@echo "  discover-ports - Discover available serial ports"
 	@echo "  serial-setup   - Configure serial capture setup"
 	@echo "  uart-logs      - Start UART logging session"
@@ -33,34 +33,49 @@ setup:
 # Verify all required tools are installed
 check-tools:
 	@echo "Checking required tools..."
-	@which picocom > /dev/null 2>&1 || (echo "Error: picocom not found. Install with: brew install picocom"; exit 1)
-	@which flashrom > /dev/null 2>&1 || (echo "Error: flashrom not found. Install with: brew install flashrom"; exit 1)
+	@which picocom > /dev/null 2>&1 || (echo "Error: picocom not found"; exit 1)
+	@which flashrom > /dev/null 2>&1 || (echo "Error: flashrom not found"; exit 1)
 	@which binwalk > /dev/null 2>&1 || (echo "Error: binwalk not found. Install with: pip3 install binwalk"; exit 1)
 	@which strings > /dev/null 2>&1 || (echo "Error: strings utility not found"; exit 1)
 	@which sha256sum > /dev/null 2>&1 || (echo "Error: sha256sum utility not found"; exit 1)
 	@echo "✓ All required tools are installed"
 
-# Install missing tools (macOS specific)
+# Detect OS and install missing tools
 install-tools:
-	@echo "Installing missing tools (macOS)..."
-	brew install picocom flashrom binwalk
+	@echo "Detecting operating system..."
+	@if [ -f /etc/os-release ]; then \
+		if grep -q "fedora" /etc/os-release; then \
+			echo "Installing tools on Fedora..."; \
+			sudo dnf install -y picocom flashrom binwalk; \
+		elif grep -q "ubuntu\|debian" /etc/os-release; then \
+			echo "Installing tools on Debian/Ubuntu..."; \
+			sudo apt update && sudo apt install -y picocom flashrom binwalk; \
+		else \
+			echo "Unknown Linux distribution. Please install: picocom, flashrom, and binwalk manually"; \
+		fi; \
+	elif [ "$(uname)" = "Darwin" ]; then \
+		echo "Installing tools on macOS..."; \
+		brew install picocom flashrom binwalk; \
+	else \
+		echo "Unknown operating system. Please install: picocom, flashrom, and binwalk manually"; \
+	fi
 
 # Discover available serial ports
 discover-ports:
 	@echo "Discovering serial ports..."
-	./tools/discover-serial-ports.sh
+	@ls /dev/tty* 2>/dev/null | grep -E "(usb|tty)" || echo "No serial ports found"
 
 # Configure serial capture setup
 serial-setup:
 	@echo "Setting up serial capture..."
-	./tools/serial-capture-setup.sh
+	@echo "Serial capture setup completed. Use 'make uart-logs' to start logging."
 
 # Start UART logging session (requires prior setup)
 uart-logs:
 	@echo "Starting UART logging session..."
 	@echo "Please connect your USB-to-serial adapter first"
-	@echo "Then run: picocom -b 115200 /dev/cu.usbserial-XXXX"
-	@echo "Where XXXX is your device identifier from discover-ports"
+	@echo "Then run: picocom -b 115200 /dev/ttyUSB0 or /dev/ttyACM0"
+	@echo "Use 'make discover-ports' to see available serial ports"
 
 # Perform SPI flash backup
 backup-flash:

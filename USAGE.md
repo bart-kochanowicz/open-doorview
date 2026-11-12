@@ -30,7 +30,11 @@ make uart-logs
 ```
 > Then connect your USB-to-serial adapter and run:
 > ```bash
-> picocom -b 115200 /dev/cu.usbserial-XXXX
+> picocom -b 115200 /dev/ttyUSB0
+> ```
+> or
+> ```bash
+> picocom -b 115200 /dev/ttyACM0
 > ```
 
 ### Step 3: Backup Flash Memory
@@ -54,7 +58,8 @@ make analyze-firmware
 ├── README.md              # Project overview  
 ├── docs/                  # Documentation
 │   ├── hardware-inventory.md
-│   └── uart-pinout.md
+│   ├── uart-pinout.md
+│   └── permissions-issue.md
 ├── tools/                 # Automation scripts (empty - managed by Makefile)
 ├── backups/               # Backup storage (created by setup)
 ├── logs/                  # Log storage (created by setup)
@@ -76,8 +81,25 @@ Before any hardware interaction:
 make install-tools  # macOS only
 ```
 
+### If serial port access fails:
+If you get "Permission denied" errors when trying to access serial ports:
+
+1. **Check your user group membership**:
+   ```bash
+   groups
+   ```
+   
+2. **Add your user to the dialout group** (Linux systems):
+   ```bash
+   sudo usermod -a -G dialout $USER
+   ```
+
+3. **Log out and log back in** for changes to take effect
+
+For more details, see: [Permissions Issue Documentation](docs/permissions-issue.md)
+
 ### If serial port discovery fails:
 ```bash
-# On macOS, you might need to use: /dev/tty.usbserial-XXXX instead of /dev/cu.usbserial-XXXX
+# On Linux, available ports are typically /dev/ttyUSB* or /dev/ttyACM*
 ls -la /dev/tty.*
 ```
