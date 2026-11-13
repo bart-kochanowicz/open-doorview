@@ -1,0 +1,15 @@
+# Local captures and analysis may contain credentials and device-specific data.
+/backups/
+/logs/
+/captures/
+/dumps/
+/artifacts/
+*.bin
+*.img
+*.dump
+*.log
+*.pcap
+*.pcapng
+.env
+.env.*
+.DS_Store

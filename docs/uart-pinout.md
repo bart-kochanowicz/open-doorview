@@ -1,53 +1,30 @@
-# UART Pinout - RH-PD10 Smart Door Peephole
+# Passive UART diagnostics
 
-## Overview
-This document details the UART connections for the RH-PD10 device based on physical identification and measurement.
+## Status
 
-## Identified UART Test Pads
+The initial notes mention two groups of pads labelled `RXD`, `TXD`, `GND`, and, on one group, `1.8V`. Their physical arrangement, connection to the main SoC and signal levels are **not verified in this repository**. A prior report of approximately 1.8 V on an idle TXD pad has no recorded measurement conditions. Do not use an assumed diagram as a pinout.
 
-### Upper Group
-- RXD (Receive Data)
-- TXD (Transmit Data)
-- GND (Ground)
+## Preparation
 
-### Lower Group
-- GND (Ground)
-- 1.8V (Supply Voltage)
-- TXD (Transmit Data)
-- RXD (Receive Data)
+1. Photograph the board and label each pad and its group. Identify ground and measure the suspected TX pad relative to ground while the camera is powered, recording the conditions and results. Avoid shorting adjacent pads.
+2. Identify the Waveshare USB–UART adapter and verify its documentation, VCCIO configuration and actual RX input compatibility with the measured device signal. Do not assume that a jumper label proves the voltage. Do not connect 3.3 V or 5 V signals to 1.8 V logic.
+3. Connect **camera TX → adapter RX**, and camera GND → adapter GND. Leave adapter TX and the camera's 1.8 V pad disconnected. Do not power the camera from the adapter.
+4. Power the camera normally for UART diagnostics. External SPI programming has different power requirements: disconnect both its battery and USB first.
 
-## Signal Levels
-- 1.8V pad: Approximately 1.8 V
-- TXD pad: Approximately 1.8 V when idle
-- RXD pad: Approximately 0 V in earlier measurement
+## Capture on macOS
 
-## Connections Diagram
-```
-            Camera PCB
-        ┌─────────────┐
-        │   Upper     │
-        │   Group     │
-        │ [RXD][TXD]  │
-        │   [GND]     │
-        └─────────────┘
-                 │
-              UART
-                 │
-        ┌─────────────┐
-        │   Lower     │
-        │   Group     │
-        │ [GND][1.8V] │
-        │ [TXD][RXD]  │
-        └─────────────┘
+Compare ports before and after connecting the adapter:
+
+```sh
+ls /dev/cu.*
 ```
 
-## Connection Recommendations
-1. Connect device RXD to adapter TXD (transmit)
-2. Connect device TXD to adapter RXD (receive)
-3. Connect both GND pins together
-4. The 1.8V pin can be used for power supply if needed, but use with caution
+Open the verified adapter port, initially trying 115200 baud, 8 data bits, no parity and one stop bit:
 
-## Baud Rate Settings
-- Default rate: 115200 8N1 (115200 baud, 8 data bits, no parity, 1 stop bit)
+```sh
+picocom -b 115200 /dev/cu.usbserial-XXXX
+```
 
-This configuration allows passive capture of the boot sequence without driving signals from the adapter.
+Replace the example with the actual port. Configure terminal logging to a private location before rebooting the camera; capture from before power-on through the complete boot or reset cycle. Exit picocom with `Ctrl-A`, then `Ctrl-X`. Record the port, settings, power state and pad group. If output is garbled or absent, recheck ground, RX connection, voltage compatibility and baud rate; silence alone does not establish a pinout or a fault.
+
+Keep raw logs private: they may contain device identifiers and secrets. Review and redact excerpts before sharing. Do not connect adapter TX until its output voltage has been validated; any active interaction must follow the approval rules in [AGENTS.md](../AGENTS.md).
