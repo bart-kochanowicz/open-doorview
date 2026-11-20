@@ -209,7 +209,8 @@ echo '== configure.sh =='
 
 conf="$work/conf"
 mkdir -p "$conf"
-printf '%s\n' "$(printf 'ab%.0s' $(seq 1 64))" > "$conf/station.hex"
+valid_station() { printf 'ab%.0s' $(seq 1 31); printf 00; printf 'cd%.0s' $(seq 1 31); printf '00\n'; }
+valid_station > "$conf/station.hex"
 printf '192.0.2.10/24\n' > "$conf/address"
 printf '02:00:00:00:00:01\n' > "$conf/mac"
 
@@ -248,6 +249,10 @@ try_bad() {
 
 check 'a station.hex that is too short is rejected, nothing written' try_bad short 'abcd' station.hex
 check 'a station.hex with non-hex characters is rejected' try_bad nothex "$(printf 'zz%.0s' $(seq 1 64))" station.hex
+check 'a station.hex whose SSID fills all 32 bytes is rejected' try_bad ssidfull "$(printf 'ab%.0s' $(seq 1 32); printf 'cd%.0s' $(seq 1 31); printf 00)" station.hex
+check 'a station.hex whose passphrase fills all 32 bytes is rejected' try_bad passfull "$(printf 'ab%.0s' $(seq 1 31); printf 00; printf 'cd%.0s' $(seq 1 32))" station.hex
+check 'a station.hex with an empty SSID is rejected' try_bad ssidempty "$(printf '00%.0s' $(seq 1 32); printf 'cd%.0s' $(seq 1 31); printf 00)" station.hex
+check 'a station.hex with an empty passphrase is rejected' try_bad passempty "$(printf 'ab%.0s' $(seq 1 31); printf 00; printf '00%.0s' $(seq 1 32))" station.hex
 check 'an address without a prefix length is rejected' try_bad noprefix '192.0.2.10' address
 check 'an address with a hostname is rejected' try_bad hostname 'camera.local/24' address
 check 'a prefix length above 32 is rejected' try_bad prefix33 '192.0.2.10/33' address

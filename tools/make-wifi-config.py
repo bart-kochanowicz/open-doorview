@@ -9,8 +9,9 @@ Writes DIR/station.hex, DIR/address and DIR/mac with mode 600. The passphrase is
 
 station.hex is the SSID followed by the WPA2 passphrase, each in a 32-byte field padded with NUL bytes,
 hex-encoded (128 characters). It is equivalent to your Wi-Fi password: keep DIR private and delete it after
-the upload. The firmware has fixed 32-byte fields, so the SSID and the passphrase are limited to 32 bytes
-each; WPA2 passphrases of 33 to 63 characters do not fit and are rejected here. The camera's radio is
+the upload. The drivers take fixed 32-byte fields and reject a field whose last byte is not NUL, so the SSID and
+the passphrase are limited to 31 bytes each; WPA2 passphrases of 32 to 63 characters do not fit and are
+rejected here. The camera's radio is
 2.4 GHz only.
 
 --mac must be the camera's own address from the original firmware (see jffs2-files.py), either as 12 hex
@@ -39,8 +40,8 @@ def main():
     args = parser.parse_args()
 
     ssid = args.ssid.encode('utf-8')
-    if not 1 <= len(ssid) <= 32:
-        fail('the SSID must be 1 to 32 bytes')
+    if not 1 <= len(ssid) <= 31:
+        fail('the SSID must be 1 to 31 bytes (the drivers need a NUL after the 32-byte field)')
 
     try:
         interface = ipaddress.ip_interface(args.address)
@@ -66,8 +67,8 @@ def main():
         passphrase = getpass.getpass('Wi-Fi passphrase (not echoed): ').encode('utf-8')
     if len(passphrase) < 8:
         fail('a WPA2 passphrase has at least 8 characters')
-    if len(passphrase) > 32:
-        fail('the passphrase is longer than the 32 bytes the camera firmware accepts')
+    if len(passphrase) > 31:
+        fail('the passphrase is longer than the 31 bytes the camera drivers accept')
 
     out = args.out
     if os.path.exists(out) and os.listdir(out):

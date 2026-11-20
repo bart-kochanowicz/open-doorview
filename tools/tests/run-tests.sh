@@ -43,11 +43,18 @@ check_fails 'an IPv6 address is refused' make_config --ssid TestNet --address 20
 check_fails 'the network address is refused' make_config --ssid TestNet --address 192.0.2.0/24 --mac 70aabbccddee --out "$work/a3"
 check_fails 'a multicast mac is refused' make_config --ssid TestNet --address 192.0.2.10/24 --mac 71aabbccddee --out "$work/a4"
 check_fails 'a short mac is refused' make_config --ssid TestNet --address 192.0.2.10/24 --mac 70aabbccdd --out "$work/a5"
-check_fails 'an SSID longer than 32 bytes is refused' make_config --ssid "$(printf 'n%.0s' $(seq 1 33))" --address 192.0.2.10/24 --mac 70aabbccddee --out "$work/a6"
+check_fails 'an SSID of 32 bytes is refused (the drivers need a NUL after the field)' make_config --ssid "$(printf 'n%.0s' $(seq 1 32))" --address 192.0.2.10/24 --mac 70aabbccddee --out "$work/a6"
+check 'an SSID of 31 bytes is accepted' make_config --ssid "$(printf 'n%.0s' $(seq 1 31))" --address 192.0.2.10/24 --mac 70aabbccddee --out "$work/b1"
+check 'a 31-byte SSID leaves the last byte of its field NUL' python3 -I -c "
+raw = bytes.fromhex(open('$work/b1/station.hex').read().strip())
+assert raw[31] == 0 and raw[63] == 0
+"
 printf 'short\n' > "$work/pass-short"
 check_fails 'a passphrase shorter than 8 characters is refused' python3 -I "$here/make-wifi-config.py" --passphrase-file "$work/pass-short" --ssid TestNet --address 192.0.2.10/24 --mac 70aabbccddee --out "$work/a7"
-printf '%033d\n' 0 > "$work/pass-long"
-check_fails 'a passphrase longer than 32 bytes is refused' python3 -I "$here/make-wifi-config.py" --passphrase-file "$work/pass-long" --ssid TestNet --address 192.0.2.10/24 --mac 70aabbccddee --out "$work/a8"
+printf '%032d\n' 0 > "$work/pass-long"
+printf '%031d\n' 0 > "$work/pass-max"
+check 'a passphrase of 31 bytes is accepted' python3 -I "$here/make-wifi-config.py" --passphrase-file "$work/pass-max" --ssid TestNet --address 192.0.2.10/24 --mac 70aabbccddee --out "$work/b2"
+check_fails 'a passphrase of 32 bytes is refused' python3 -I "$here/make-wifi-config.py" --passphrase-file "$work/pass-long" --ssid TestNet --address 192.0.2.10/24 --mac 70aabbccddee --out "$work/a8"
 check 'nothing was left behind by the refused runs' test ! -e "$work/a1" -a ! -e "$work/a4" -a ! -e "$work/a8"
 
 echo '== jffs2-files.py =='

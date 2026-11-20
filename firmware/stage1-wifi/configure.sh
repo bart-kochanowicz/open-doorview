@@ -25,6 +25,11 @@ case $(wc -c < "$source_dir/station.hex" | tr -d '[:space:]') in
     *) echo 'station.hex must be 128 hex characters' >&2; exit 1 ;;
 esac
 grep -Eq '^[0-9a-fA-F]{128}$' "$source_dir/station.hex" || { echo 'station.hex must be 128 hex characters' >&2; exit 1; }
+# The drivers reject an empty SSID or passphrase and a field whose last byte is not NUL.
+station=$(tr -d '[:space:]' < "$source_dir/station.hex")
+[ "$(printf '%s' "$station" | cut -c1-2)" != 00 ] && [ "$(printf '%s' "$station" | cut -c65-66)" != 00 ] &&
+    [ "$(printf '%s' "$station" | cut -c63-64)" = 00 ] && [ "$(printf '%s' "$station" | cut -c127-128)" = 00 ] ||
+    { echo 'station.hex fields must be non-empty and shorter than 32 bytes' >&2; exit 1; }
 read -r address < "$source_dir/address" || exit 1
 read -r mac < "$source_dir/mac" || exit 1
 printf '%s\n' "$address" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$' || { echo 'address must be an IPv4 address with a prefix length' >&2; exit 1; }
