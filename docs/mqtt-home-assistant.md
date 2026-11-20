@@ -1,8 +1,8 @@
 # MQTT and Home Assistant
 
-`doorview-mqtt` is a small daemon (11 KB, static ARM, no libc) that publishes the camera's battery, external power, button and uptime to an MQTT broker, with Home Assistant MQTT discovery so the entities appear on their own. It is stage 3 of the [install guide](install-guide.md#step-8-stage-3-mqtt-for-home-assistant).
+`doorview-mqtt` is a small daemon (13 KB, static ARM, no libc) that publishes the camera's battery, external power, button, uptime and, optionally, motion to an MQTT broker, with Home Assistant MQTT discovery so the entities appear on their own. It is stage 3 of the [install guide](install-guide.md#step-8-stage-3-mqtt-for-home-assistant).
 
-**Status:** an earlier build of the daemon was run from RAM on a real camera against a temporary broker (discovery, a retained state from a real power frame, one event per real button press, OFF/ON on a real USB unplug and replug, uptime every 60 s, no reconnects over the run). Code review then found two defects (a write to a closed socket killed the daemon with SIGPIPE; a failed first publish after CONNACK made the receive loop read past its buffer). Both are fixed and the shipped binary was rebuilt; the rebuilt binary was installed with stage 3 on one camera on 2026-11-20 and connected to a Mosquitto 2.1.4 broker with authentication and a restrictive ACL, then reconnected after two reboots (it retries while Wi-Fi comes up). That is minutes of runtime, not days. The logic is covered by 49 tests against a real Mosquitto in Docker (`firmware/userland/mqtt/tests/run-tests.sh`).
+**Status:** stage 3 with an earlier build of this daemon is installed on one camera and was observed for minutes and two reboots (see [known limits](known-limits.md)). The build in this repository adds the optional motion sensor and a keepalive fix. It ran from RAM on the camera on 2026-11-20 against the real Mosquitto broker and a real Home Assistant: the Motion entity appeared, went ON when a hand was waved in front of the lens and OFF about 10 s later. It is **not installed persistently** yet. The logic is covered by 77 tests against a real Mosquitto in Docker (`firmware/userland/mqtt/tests/run-tests.sh`), including a fake Majestic and an ASan/UBSan build.
 
 ## What it needs
 
@@ -33,6 +33,7 @@
 | Power status (diagnostic) | `A2` status byte | The raw value: 1 on battery, 2 with USB. Whether 2 is "charging" or "full" is unknown. |
 | Button (event entity) | `A5` records | A press is a burst of records, counted once (250 ms window). History from before the daemon started is not replayed. |
 | Uptime (diagnostic) | `/proc/uptime` | Every 60 s, not retained. |
+| Motion (optional, `motion=1`) | Majestic's `md_rects_acc_total` | A binary sensor (`device_class: motion`). ON when the counter rises, OFF `motion_hold` seconds (default 10) after the last rise. See [Motion](#motion). Retained. |
 | Availability | MQTT last will | `online` retained; the broker publishes `offline` (retained) if the camera disappears. |
 
 States are retained; button events and uptime are not. Topics are `doorview/<node>/...`; discovery is `<discovery>/<component>/<node>/<object>/config`, with unique ids prefixed by the node name.
@@ -55,17 +56,35 @@ name=Front door camera
 discovery=homeassistant
 keepalive=60
 wifi_watchdog=0
+motion=1
+motion_port=80
+motion_hold=10
 ```
 
 `gateway` is the router of the camera's subnet. It is only used by `S97doorview-mqtt` (the daemon ignores the key), and only when the camera has no default route yet. Leave it out when the broker is in the camera's own subnet.
 
 `configure.sh` rejects hostnames, a gateway that is not an IPv4 address, a missing user or password, unknown keys, bad ports, over-long values and symlinks, and it prints nothing from the file. Without this file `S97doorview-mqtt` starts nothing, so installing the package is harmless until you configure it.
 
+`motion=1` turns the motion sensor on (default 0, no entity is created); `motion_port` is the port of Majestic's web server on the camera itself (default 80) and `motion_hold` the seconds the sensor stays ON after the last rise of the counter (1 to 600, default 10).
+
 `wifi_watchdog=1` makes the daemon request a station reconnect when the broker has been unreachable for 3 minutes and no frame was received for 90 s, at most once per 5 minutes. It is **off by default**: in the one case where a software reconnect was tried on a dead Wi-Fi data path it did not help.
+
+## Motion
+
+Majestic (the camera's video service) has a hardware motion detector, off by default. Enable it with this in `/etc/majestic.yaml` (a flash write; restart Majestic with `/etc/init.d/S95majestic restart`):
+
+```
+motionDetect:
+  enabled: true
+```
+
+Majestic then serves Prometheus counters at `/metrics/motion`; with detection off it reports zeros and never rises. The daemon reads `md_rects_acc_total` (rectangles the detector reported inside the region of interest) from `127.0.0.1` once per second. Requests from the camera itself need no password (observed: the camera's own requests skip Majestic's authentication, while requests from the network get `401`). A counter that goes down means Majestic restarted and is treated as a new baseline, not as motion; a `401` page, an answer without the counter or a half-written line is ignored; if Majestic disappears while the sensor is ON, it still goes OFF after the hold time.
+
+Observed on the unit (one camera, 2026-11-20): the counter rose from 0 to 148 and to 201 in two hand-waving tests, the load average did not change, and the Home Assistant entity followed. **Not known:** the false-alarm rate (shadows, light changes, the corridor outside), the effect of the default sensitivity and region of interest, behaviour over days and at night.
 
 ## How it works
 
-It opens `/dev/kmsg` and parses the `doorview_control` and `doorview_power` lines the stage 3 network driver writes ([coprocessor](wifi-companion.md#control-frames-from-the-mcu)). Because it needs the `doorview_power` line, stage 3 replaces the stage 2 driver with a build that adds it; the button line the LCD service matches is unchanged. A single poll loop handles the kernel log, the socket and the timers; connecting is non-blocking.
+It opens `/dev/kmsg` and parses the `doorview_control` and `doorview_power` lines the stage 3 network driver writes ([coprocessor](wifi-companion.md#control-frames-from-the-mcu)). Because it needs the `doorview_power` line, stage 3 replaces the stage 2 driver with a build that adds it; the button line the LCD service matches is unchanged. A single poll loop handles the kernel log, the socket and the timers; connecting is non-blocking. The motion poll is a short exchange on its own socket (bounded to 300 ms, stopped as soon as the line is complete), so a slow Majestic cannot stall the MQTT connection for long. The daemon pings the broker when it has heard nothing for half the keepalive, even while it is publishing: the broker acknowledges nothing the daemon publishes, so a daemon that publishes often would otherwise declare the broker dead (found by the motion tests).
 
 Source: `firmware/userland/mqtt/` (`doorview-mqtt.c` is the logic; `sys-arm.c` is a raw-syscall layer for the camera; `sys-host.c` is a POSIX layer used only by the tests).
 
