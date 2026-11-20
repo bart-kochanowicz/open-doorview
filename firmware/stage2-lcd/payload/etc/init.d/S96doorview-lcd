@@ -1,0 +1,14 @@
+#!/bin/sh
+
+service=${DOORVIEW_LCD_SERVICE:-/etc/doorview-lcd/service}
+delay=${DOORVIEW_LCD_DELAY:-20}
+
+case "${1:-}" in
+    start)
+        # Let majestic and the SDIO link settle. The service starts in the
+        # background so it can never delay or block the rest of boot.
+        ( sleep "$delay"; sh "$service" start ) < /dev/null > /tmp/doorview-lcd-boot.log 2>&1 &
+        ;;
+    stop|restart|status) sh "$service" "$1" ;;
+    *) echo "Usage: $0 {start|stop|restart|status}" >&2; exit 2 ;;
+esac

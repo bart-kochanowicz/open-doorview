@@ -1,0 +1,89 @@
+#!/bin/sh
+set -eu
+umask 077
+
+files=${DOORVIEW_LCD_DIR:-/etc/doorview-lcd}
+runtime=/tmp/lcd-vo-test
+gpio=/sys/class/gpio/gpio13
+pidfile=$runtime/button-listener.pid
+listener=$runtime/button-preview
+
+running() {
+    [ -r "$pidfile" ] && read -r pid < "$pidfile" || return 1
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$(readlink "/proc/$pid/exe" 2>/dev/null)" = "$listener" ]
+}
+
+backlight_off() {
+    [ "$(devmem 0x120c0014 32)" = 0x00001E02 ] || return 1
+    if [ ! -d "$gpio" ]; then
+        echo 13 > /sys/class/gpio/export || return 1
+    fi
+    if [ "$(cat "$gpio/direction")" = out ]; then
+        echo 0 > "$gpio/value" || return 1
+    else
+        echo low > "$gpio/direction" || return 1
+    fi
+    [ "$(cat "$gpio/direction")" = out ] &&
+        [ "$(devmem 0x120b1080 32)" = 0x00000000 ]
+}
+
+start() {
+    running && return 0
+    backlight_off || return 1
+    for file in button-preview vo-live-30 libuclibc-compat.so live-30.sh vo.ko; do
+        cp "$files/$file" "$runtime/$file" || return 1
+    done
+    if [ ! -c /dev/vo ]; then
+        insmod "$runtime/vo.ko" || return 1
+    fi
+    [ -c /dev/vo ] || return 1
+    nohup "$listener" </dev/null > "$runtime/button-listener.log" 2>&1 8>&- &
+    pid=$!
+    printf '%s\n' "$pid" > "$pidfile"
+    for attempt in 1 2 3 4 5; do
+        if running && grep -qx BUTTON_PREVIEW_READY "$runtime/button-listener.log"; then
+            echo 'Doorview LCD ready'
+            return 0
+        fi
+        sleep 1
+    done
+    echo 'Doorview LCD listener failed to start' >&2
+    return 1
+}
+
+stop() {
+    if running; then
+        kill -TERM "$pid" || return 1
+        for attempt in 1 2 3 4 5; do
+            running || break
+            sleep 1
+        done
+        if running; then
+            echo 'Doorview LCD listener failed to stop' >&2
+            return 1
+        fi
+    fi
+    exec 9>"$runtime/preview.lock"
+    remaining=40
+    until flock -n 9; do
+        [ "$remaining" -gt 0 ] || return 1
+        remaining=$((remaining - 1))
+        sleep 1
+    done
+    rm -f "$pidfile"
+    backlight_off || return 1
+    echo 'Doorview LCD stopped'
+}
+
+mkdir -p "$runtime"
+exec 8>"$runtime/service.lock"
+flock -n 8 || exit 1
+
+case "${1:-}" in
+    start) start ;;
+    stop) stop ;;
+    restart) stop && flock -u 9 && start ;;
+    status) if running; then echo 'Doorview LCD running'; else echo 'Doorview LCD stopped'; exit 1; fi ;;
+    *) echo "Usage: $0 {start|stop|restart|status}" >&2; exit 2 ;;
+esac
