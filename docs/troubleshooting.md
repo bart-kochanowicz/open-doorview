@@ -22,6 +22,8 @@ Look at `dmesg | grep 'FIFO empty'`:
 - `FIFO empty` grows by about 100 per second and `frames` is frozen: this is the polling-driver stall. The stage 2 interrupt-driven driver exists to avoid it. If it happens with stage 2 installed, check `ls /sys/module/syslink_net/parameters/` for `irq_rx`, `rx_gpio`, `rx_poll_ms`: if they are missing, the polling driver was loaded (the interrupt driver failed to start; `dmesg` says why).
 - `station.hex` wrong (typo in the passphrase, SSID or passphrase with more than 31 bytes): the camera never joins. Recreate it with `make-wifi-config.py` and `configure.sh --replace`.
 
+**`nc`/the MQTT daemon says "Network unreachable" for a host in another subnet.** The camera has only the route of its own subnet (`ip route`). Add `gateway=<router>` to `mqtt.conf` (stage 3 adds the default route at boot), or test once with `ip route add default via <router> dev dv0` (RAM only, gone after a reboot).
+
 **Joined, but only some hosts can reach it.** Early drivers did not always receive ARP requests from other hosts (the gateway's got through). In testing, a directed ARP request sent *from* the camera to the client populated both neighbour caches and restored access; that was a diagnostic helper and is not shipped. The cause was never found. Prefer a static reservation on a normal, non-isolated network, and test from a second client.
 
 **The stream stutters or is far slower than real time.** Use the 640×360, 5 fps, 128 kb/s profile from the install guide and make sure `isp.slowShutter` is `disabled` (in a dark room the sensor otherwise drops to 2 fps). The SDIO link carries only a few hundred kilobits per second of useful video.

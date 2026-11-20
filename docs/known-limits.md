@@ -21,6 +21,7 @@ Read this before trusting any part of the project.
 
 ## Not implemented
 
+- A default route: stages 1 and 2 set only the on-link route, so the camera cannot reach another subnet (observed 2026-11-20: `nc` to a broker in another subnet failed with "Network unreachable" and succeeded after `ip route add default via <router>` in RAM). Stage 3 adds it from `gateway=` in `mqtt.conf`; that boot-time path is covered by tests only, not yet run on a camera.
 - DHCP, automatic Wi-Fi reconnect (an optional watchdog exists, off, and its recovery step is unproven), WPA3, open networks, 5 GHz, SSIDs or passphrases over 31 bytes.
 - Signal strength and access-point information (the factory command exists; it was never sent because commands to the MCU are risky).
 - TLS for MQTT.

@@ -61,7 +61,7 @@ Private material lives **outside** the repository (flash dumps, overlay backups,
 
 ## Next work (in a sensible order)
 
-1. Install stage 3 on the camera once a broker is verified reachable from the camera's network (fresh overlay backup, approval). This is also the first run on a camera of the rebuilt `doorview-mqtt` and of the hardened stage 2 and 3 installers; update `docs/known-limits.md` and the README when it succeeds.
+1. Install stage 3 on the camera (fresh overlay backup, approval). The broker is reachable from the camera's subnet only with a default route, which stages 1 and 2 do not set: put `gateway=` in `mqtt.conf`. This is also the first run on a camera of the rebuilt `doorview-mqtt` and of the hardened stage 2 and 3 installers; update `docs/known-limits.md` and the README when it succeeds.
 2. Wi-Fi health: understand the dead-data-path state, then decide on a reconnect or watchdog that is proven to recover (the optional `wifi_watchdog` is unproven and off).
 3. Long-run stability of the interrupt-driven driver (only about 100 minutes observed) and the cause of the occasional early-boot restart.
 4. Signal strength and access-point info (needs the RSSI query; warn first).
