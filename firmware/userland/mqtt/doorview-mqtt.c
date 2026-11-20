@@ -2,6 +2,7 @@
  * (Home Assistant discovery). It follows the kernel log written by the syslink driver:
  *   doorview_power: command=a2 ... payload=SS UU CC CC   MCU PowerInfo: status, usb, capacity
  *   doorview_control: command=a5 length=8                button
+ * With motion=1 it also polls Majestic's motion counter on the loopback interface (see fetch_motion_total).
  * Platform access goes through sys.h, so the same logic runs on the camera and on a test host. */
 #include "sys.h"
 
@@ -15,6 +16,9 @@
 #define BACKOFF_MAX_MS 60000
 #define UPTIME_PERIOD_MS 60000
 #define BUTTON_DUPLICATE_US 250000u
+#define MOTION_POLL_MS 1000u
+#define MOTION_IO_MS 300u
+#define METRICS_MAX 4096
 
 struct config {
     u32 address;
@@ -31,6 +35,9 @@ struct config {
     char station_file[128];
     char reconnect_parameter[128];
     int wifi_watchdog;
+    int motion;
+    int motion_port;
+    int motion_hold;
 };
 
 static struct config cfg;
@@ -247,6 +254,8 @@ static int load_config(const char *path)
 
     cfg.port = 1883;
     cfg.keepalive = 60;
+    cfg.motion_port = 80;
+    cfg.motion_hold = 10;
     str_copy(cfg.node, sizeof(cfg.node), "front-door-camera");
     str_copy(cfg.name, sizeof(cfg.name), "Front door camera");
     str_copy(cfg.discovery, sizeof(cfg.discovery), "homeassistant");
@@ -332,6 +341,16 @@ static int load_config(const char *path)
                 return -9;
         } else if (str_eq(line, "wifi_watchdog")) {
             cfg.wifi_watchdog = str_eq(value, "1");
+        } else if (str_eq(line, "motion")) {
+            cfg.motion = str_eq(value, "1");
+        } else if (str_eq(line, "motion_port")) {
+            if (!parse_number(value, &number) || number < 1 || number > 65535)
+                return -10;
+            cfg.motion_port = number;
+        } else if (str_eq(line, "motion_hold")) {
+            if (!parse_number(value, &number) || number < 1 || number > 600)
+                return -11;
+            cfg.motion_hold = number;
         }
     }
     return have_host ? 0 : -8;
@@ -439,6 +458,7 @@ static u32 deadline_ms;
 static u32 last_sent_ms;
 static u32 last_received_ms;
 static u32 last_up_ms;
+static u32 last_ping_ms;
 static u32 receive_length;
 static u8 receive_buffer[RECEIVE_MAX];
 
@@ -500,6 +520,13 @@ static u32 last_uptime_ms;
 static int replaying = 1;
 static u32 last_button_us;
 static int have_last_button;
+static int motion_state = -1; /* 0/1, -1 until the first successful poll */
+static int dirty_motion;
+static int have_motion_total;
+static u32 motion_total;
+static u32 motion_until_ms;
+static u32 last_motion_poll_ms;
+static char metrics[METRICS_MAX];
 
 static int publish_discovery_entry(const char *component, const char *object, const char *label, const char *extra)
 {
@@ -557,7 +584,9 @@ static int publish_discovery(void)
            publish_discovery_entry("sensor", "uptime", "Uptime",
                                    ",\"device_class\":\"duration\",\"unit_of_measurement\":\"s\",\"entity_category\":\"diagnostic\",\"state_class\":\"total_increasing\"") ||
            publish_discovery_entry("event", "button", "Button",
-                                   ",\"device_class\":\"button\",\"event_types\":[\"press\"]");
+                                   ",\"device_class\":\"button\",\"event_types\":[\"press\"]") ||
+           (cfg.motion && publish_discovery_entry("binary_sensor", "motion", "Motion",
+                                                  ",\"device_class\":\"motion\",\"payload_on\":\"ON\",\"payload_off\":\"OFF\""));
 }
 
 static int read_uptime_seconds(void)
@@ -618,6 +647,11 @@ static int publish_states(int everything)
             return -1;
         dirty_usb = 0;
     }
+    if (motion_state >= 0 && (everything || dirty_motion)) {
+        if (publish("motion", motion_state ? "ON" : "OFF", 1))
+            return -1;
+        dirty_motion = 0;
+    }
     return 0;
 }
 
@@ -629,6 +663,111 @@ static int send_events(void)
         pending_buttons--;
     }
     return 0;
+}
+
+/* ---- motion ---- */
+
+/* Reads the value of Majestic's md_rects_acc_total (rectangles the hardware motion detector reported inside the
+ * region of interest) from http://127.0.0.1:<motion_port>/metrics/motion. Requests from the camera itself need no
+ * password. One short exchange on a fresh socket, bounded by MOTION_IO_MS, stopped as soon as the line is complete.
+ * Returns 0 and the value, or -1 when Majestic does not answer or has no such counter (motion detection is off). */
+static int parse_motion_total(const char *text, int length, u32 *total)
+{
+    static const char key[] = "\nmd_rects_acc_total ";
+    const char *at = find_text(text, length, key);
+    u32 value = 0;
+    int digits = 0;
+
+    if (!at)
+        return -1;
+    at += sizeof(key) - 1;
+    while (at < text + length && *at >= '0' && *at <= '9') {
+        if (++digits > 9)
+            return -1;
+        value = value * 10u + (u32)(*at - '0');
+        at++;
+    }
+    /* The line must be complete, or a partial read would look like a smaller counter. */
+    if (!digits || at >= text + length || (*at != '\n' && *at != '\r'))
+        return -1;
+    *total = value;
+    return 0;
+}
+
+static int fetch_motion_total(u32 *total)
+{
+    static const char request[] = "GET /metrics/motion HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    u32 started = sys_now_ms();
+    int length = 0;
+    int result = -1;
+    int status;
+    int fd = sys_tcp_start(0x7f000001u, (u16)cfg.motion_port);
+
+    if (fd < 0)
+        return -1;
+    while ((status = sys_tcp_status(fd)) == 1) {
+        if (sys_now_ms() - started > MOTION_IO_MS)
+            goto done;
+        sys_wait(-1, fd, 1, 20);
+    }
+    if (status != 0 || sys_write(fd, request, (int)sizeof(request) - 1) != (int)sizeof(request) - 1)
+        goto done;
+    while (length < METRICS_MAX - 1) {
+        int count = sys_read(fd, metrics + length, METRICS_MAX - 1 - length);
+
+        if (count == SYS_EAGAIN) {
+            if (sys_now_ms() - started > MOTION_IO_MS)
+                break;
+            sys_wait(-1, fd, 0, 20);
+            continue;
+        }
+        if (count <= 0)
+            break;
+        length += count;
+        if (!parse_motion_total(metrics, length, total)) {
+            result = 0;
+            break;
+        }
+    }
+done:
+    sys_close(fd);
+    return result;
+}
+
+/* Turns the counter into a binary sensor: ON when it rises, OFF motion_hold seconds after the last rise. A counter
+ * that goes down means Majestic restarted: take it as the new baseline instead of as motion. */
+static void update_motion(u32 now)
+{
+    u32 total;
+
+    if (motion_state == 1 && (int)(now - motion_until_ms) >= 0)
+        motion_state = 0;
+    if (now - last_motion_poll_ms < MOTION_POLL_MS)
+        return;
+    last_motion_poll_ms = now;
+    if (fetch_motion_total(&total))
+        return;
+    now = sys_now_ms();
+    if (motion_state < 0)
+        motion_state = 0;
+    if (have_motion_total && total > motion_total) {
+        motion_until_ms = now + (u32)cfg.motion_hold * 1000u;
+        motion_state = 1;
+    }
+    motion_total = total;
+    have_motion_total = 1;
+}
+
+/* Only a real change is published: a hold that runs out in the same pass as a new rise stays ON. */
+static void poll_motion(u32 now)
+{
+    int previous = motion_state;
+
+    if (!cfg.motion)
+        return;
+    update_motion(now);
+    if (motion_state != previous)
+        dirty_motion = 1;
 }
 
 /* ---- kernel log parsing ---- */
@@ -837,6 +976,7 @@ static void on_connected(u32 now)
     backoff_ms = BACKOFF_MIN_MS;
     last_up_ms = now;
     last_received_ms = now;
+    last_ping_ms = now;
     logmsg("connected");
     if (publish_discovery() || publish("availability", "online", 1) || publish_states(1) || publish_uptime())
         link_fail("publish failed after connect");
@@ -947,6 +1087,7 @@ int app_main(const char *config_path)
         last_up_ms = now;
         last_rx_change_ms = now;
         last_uptime_ms = now;
+        last_motion_poll_ms = now;
         next_attempt_ms = now;
     }
     logmsg("started");
@@ -956,6 +1097,8 @@ int app_main(const char *config_path)
         int wait_ms = 1000;
 
         drain_kmsg(kmsg_fd);
+        now = sys_now_ms();
+        poll_motion(now);
         now = sys_now_ms();
         switch (link) {
         case LINK_DOWN:
@@ -1000,9 +1143,13 @@ int app_main(const char *config_path)
                     break;
                 }
             }
-            if (now - last_sent_ms >= (u32)cfg.keepalive * 500u) {
+            /* The broker acknowledges nothing we publish, so a busy publisher must also ping when it has
+             * heard nothing for half the keepalive; otherwise it would declare the broker dead below. */
+            if (now - last_sent_ms >= (u32)cfg.keepalive * 500u ||
+                (now - last_received_ms >= (u32)cfg.keepalive * 500u && now - last_ping_ms >= (u32)cfg.keepalive * 500u)) {
                 static const u8 ping[2] = { 0xc0, 0 };
 
+                last_ping_ms = now;
                 if (send_all(ping, 2)) {
                     link_fail("keepalive failed");
                     break;
