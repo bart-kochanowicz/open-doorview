@@ -43,7 +43,7 @@ try:
         wait(rb'Password:', 5)
         send(password + b'\n')
         wait(prompt, 8)
-    command = ("umask 077; mkdir -p /tmp/lcd-vo-test && cd /tmp/lcd-vo-test && "
+    command = ("umask 077; mkdir -p /tmp/doorview-upload && cd /tmp/doorview-upload && "
                "old_tty=$(stty -g) && stty -echo && printf '\\nLCD_UPLOAD_READY\\n' && "
                "timeout 90 base64 -d > live-upload.tgz; upload=$?; stty \"$old_tty\"; "
                f"test \"$upload\" = 0 && echo '{digest}  live-upload.tgz' | sha256sum -c - && "
