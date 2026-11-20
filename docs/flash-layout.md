@@ -2,7 +2,9 @@
 
 ## Current status
 
-No flash dump or partition map has been verified. The previously listed offsets and partition sizes were unsupported and must not be used. The initial notes report a Winbond `W25Q64JWSSIQ` (64 Mbit / 8 MiB), but the physical marking, package, voltage requirements and programmer identification must be checked against the exact chip's datasheet.
+The chip on the verified unit is a Winbond W25Q64JW (reported by `flashrom` as `W25Q64.W`, 8192 kB, SPI) and U-Boot identifies it as ID `0xef 0x60 0x17`, 64 KiB blocks, 8 MiB. Two complete reads with `flashrom 1.8.0` and a CH341A produced files of 8,388,608 bytes with identical SHA-256. A matching pair proves consistent reads, not that the contents can be written back. The restoration procedure has never been tested.
+
+The chip's supply and signals are 1.8 V: use a programmer or adapter that protects both, as described below.
 
 ## Backup procedure
 
@@ -26,10 +28,29 @@ If reads fail, identification is inconsistent or hashes differ, stop. Investigat
 
 ## Analysis record
 
-Populate this only from actual evidence. Record offsets, lengths, discovery method and confidence; distinguish tool guesses from confirmed boundaries.
+Offsets observed in the factory image (an 8 MiB dump of the unit) and in the OpenIPC image that replaces it. "Observed structure" means data of that type was found at the offset; it is not a published partition table. Both are from analysis copies; the originals were not modified.
 
-| Region | Offset | Length | Evidence / confidence |
-| --- | --- | --- | --- |
-| Not yet established | — | — | No verified dump or boot log recorded. |
+### Factory firmware
+
+| Region | Offset | Evidence / confidence |
+|---|---|---|
+| Boot loader copies (gzip streams named `u-boot.bin`) | `0x4620`, `0x1c290` | gzip integrity passes; observed structure |
+| U-Boot environment | `0x50000`, 64 KiB | CRC32 matches; `bootargs=console=ttyAMA0,115200n8 root=/dev/mtdblock2 rw`, `bootcmd=sf probe 0;quickstart;sf read 0x41000000 0x80000 0x560000;ugzip 0x41000000 0x40000000;go 0x40000000;` |
+| Application image (gzip, an RTOS image named `p2pcam.bin`, load address `0x40000000`) | `0x80010` | gzip integrity passes |
+| JFFS2 data | `0x5e0000`, `0x650000`, `0x690000` | extracted with no node or data CRC error; holds device identity, the MAC address, cloud keys and settings: **private** |
+
+The factory firmware is an RTOS, not Linux. Its build strings select GK7202V300; its hardware configuration names GK7202EV300 and a GC2053 sensor. The physical SoC marking should still be confirmed on your board.
+
+### OpenIPC (as installed)
+
+| Region | Offset | Evidence / confidence |
+|---|---|---|
+| U-Boot | `0x0` to `0x40000` | U-Boot 2022.10 boot log |
+| U-Boot environment | `0x40000` to `0x50000` | OpenIPC layout |
+| Linux kernel (uImage) | `0x50000` to `0x230000` | "Found Kernel at 0x00050000", `Linux-4.9.37-gk7202v300`, 1,903,572 bytes |
+| SquashFS root file system | `0x230000` to `0x800000` | "Found RootFS at 0x00230000" |
+| Writable `rootfs_data` JFFS2 overlay | `0x750000` to `0x800000` (720,896 bytes) | `/dev/mtdblock5`, mounted at `/overlay` |
+
+End offsets are exclusive. The installers in this repository write only to the overlay.
 
 Analyze copies with tools such as `file`, `binwalk`, `strings` and `xxd`. Tool output, extracted files and logs can contain secrets too. Never publish complete dumps or unique calibration, identity or credential data.
