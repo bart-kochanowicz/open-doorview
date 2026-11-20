@@ -11,7 +11,7 @@ Read [Before you start](#before-you-start) completely. **Flashing replaces the f
 | OpenIPC boot | Linux 4.9.37 from flash, Majestic serving HTTP and RTSP | Boot logs; running for days on one unit |
 | 1. Wi-Fi base | Station mode on the Wi-Fi coprocessor, static IPv4, `dv0` interface | Installed on one unit; stream decoded for 300 s at 5.03 fps; the installer for this repository was written afterwards and is tested only on fixture trees |
 | 2. LCD + button | Front button lights the panel with a 30 s live preview; IRQ-driven SDIO receive | Installed on one unit; four of four button tests, cold start with the battery disconnected |
-| 3. MQTT | Battery, external power, button event and uptime for Home Assistant | Run from RAM on one unit with a temporary broker; **not installed persistently** |
+| 3. MQTT | Battery, external power, button event and uptime for Home Assistant | Installed on one unit; connects to a broker with authentication; observed for minutes and two reboots |
 
 One camera was used throughout. Other units, batches or firmware revisions are untested. See [known limits](known-limits.md) before relying on any of it.
 
@@ -172,7 +172,7 @@ Rollback: upload the same package again and run `sh rollback.sh` from it. It res
 
 ## Step 8. Stage 3: MQTT for Home Assistant
 
-Needs an MQTT 3.1.1 broker the camera can reach on plain TCP with a user and password (the camera's user needs write access to `doorview/<node>/#` and `homeassistant/+/<node>/+/config`; Home Assistant's user needs to read them). See [MQTT and Home Assistant](mqtt-home-assistant.md) for topics, entities and an example Mosquitto ACL. The broker address must be an IPv4 address.
+Needs an MQTT 3.1.1 broker the camera can reach on plain TCP with a user and password (the camera's user needs write access to `doorview/<node>/#` and to the `sensor`, `binary_sensor` and `event` discovery topics under `homeassistant/`; Home Assistant's user needs to read them). See [MQTT and Home Assistant](mqtt-home-assistant.md) for topics, entities and an example Mosquitto ACL. The broker address must be an IPv4 address. If the broker is in another subnet than the camera, the camera also needs a default route (stages 1 and 2 set none): add `gateway=` to the settings file below.
 
 ```sh
 tools/package.sh stage3-mqtt
@@ -181,7 +181,7 @@ python3 tools/upload-archive.py build/packages/stage3-mqtt.tar.gz "$DOORVIEW_PW"
 cd /tmp/lcd-vo-test && sh install.sh .       # prints MQTT_INSTALLED
 ```
 
-Create the broker settings locally in a file of mode 600 (`host=`, `port=`, `user=`, `password=`), upload it with the same silent upload, run `sh configure.sh <file>` (prints `MQTT_CONFIGURED`), delete the local copy, and reboot. Check `cat /tmp/doorview-mqtt.log` and the new device in Home Assistant.
+Create the broker settings locally in a file of mode 600 (`host=`, `port=`, `user=`, `password=`, and `gateway=` when the broker is in another subnet), upload it with the same silent upload, run `sh configure.sh <file>` (prints `MQTT_CONFIGURED`), delete the local copy, and reboot. Check `cat /tmp/doorview-mqtt.log` and the new device in Home Assistant.
 
 Rollback: upload the same package again and run `sh rollback.sh` from it. It restores the stage 2 driver from the copy the installer kept and removes the daemon and its hook; `mqtt.conf` (credentials) stays until you delete it.
 

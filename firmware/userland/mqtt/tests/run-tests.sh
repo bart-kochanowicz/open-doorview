@@ -74,7 +74,9 @@ topic readwrite #
 
 user front-door-camera
 topic write doorview/front-door-camera/#
-topic write homeassistant/+/front-door-camera/+/config
+topic write homeassistant/sensor/front-door-camera/+/config
+topic write homeassistant/binary_sensor/front-door-camera/+/config
+topic write homeassistant/event/front-door-camera/+/config
 EOF
 : > "$work/broker/passwd"
 docker run --rm -v "$work/broker:/mosquitto/config" eclipse-mosquitto:2 sh -c \

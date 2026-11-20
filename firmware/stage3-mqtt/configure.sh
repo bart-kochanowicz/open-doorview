@@ -19,6 +19,7 @@ host=
 port=
 user=
 password=
+gateway=
 while IFS= read -r line || [ -n "$line" ]; do
     line=${line%"$(printf '\r')"}
     case "$line" in
@@ -27,6 +28,7 @@ while IFS= read -r line || [ -n "$line" ]; do
         port=*) port=${line#port=} ;;
         user=*) user=${line#user=} ;;
         password=*) password=${line#password=} ;;
+        gateway=*) gateway=${line#gateway=} ;;
         node=*|name=*|discovery=*|keepalive=*|wifi_watchdog=*) ;;
         *) echo "unknown key in configuration" >&2; exit 1 ;;
     esac
@@ -34,6 +36,7 @@ done < "$source_file"
 
 printf '%s\n' "$host" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$' || { echo 'host must be an IPv4 address' >&2; exit 1; }
 [ "${port:-1883}" -ge 1 ] 2> /dev/null && [ "${port:-1883}" -le 65535 ] || { echo 'bad port' >&2; exit 1; }
+[ -z "$gateway" ] || printf '%s\n' "$gateway" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$' || { echo 'gateway must be an IPv4 address' >&2; exit 1; }
 [ -n "$user" ] && [ -n "$password" ] || { echo 'user and password are required' >&2; exit 1; }
 [ "${#password}" -lt 64 ] && [ "${#user}" -lt 64 ] || { echo 'user or password too long' >&2; exit 1; }
 

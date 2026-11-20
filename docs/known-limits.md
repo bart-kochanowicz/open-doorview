@@ -6,8 +6,8 @@ Read this before trusting any part of the project.
 
 - **One camera.** Everything was developed and tested on a single RH-PD10. Another unit, batch or firmware revision may differ (the board, the MCU firmware, the flash layout).
 - **Days, not months.** The longest uninterrupted observation of the interrupt-driven driver is 47 minutes; about 100 minutes in total. Earlier failures appeared at random up to 31 minutes. Rare failures cannot be excluded.
-- **The shipped `doorview-mqtt` was rebuilt after code review** (SIGPIPE handling and a receive-buffer fix) and has not run on a camera since. It was exercised by the Docker suite (including an ASan/UBSan build against a broker that drops the connection) and, as the real freestanding ARM binary, under `qemu-user`, where the previous build died with SIGPIPE and the new one reconnects.
-- **Stage 1 and 3 installers are new.** The stage 1 installer was written for this repository and has been tested only on fixture trees (the unit received its stage 1 files through earlier scripts that did not survive in this form). Stage 3 has never been installed persistently. Stage 2's payload was installed and verified on the unit; its installer script was hardened after review and has been run only by the fixture tests.
+- **The shipped `doorview-mqtt` was rebuilt after code review** (SIGPIPE handling and a receive-buffer fix). It ran on the camera on 2026-11-20 (installed, authenticated against a Mosquitto broker with a restrictive ACL, published to Home Assistant, reconnected after two reboots once Wi-Fi was up), but only for minutes. Not observed with this build: a button event, a long run, a broker outage on the camera. The SIGPIPE and receive-buffer paths were exercised only by the Docker suite (including an ASan/UBSan build) and under `qemu-user`.
+- **Stage 1 and 3 installers are new.** The stage 1 installer was written for this repository and has been tested only on fixture trees (the unit received its stage 1 files through earlier scripts that did not survive in this form). The stage 3 installer was run on the unit on 2026-11-20 (install, `rollback.sh`, install again; the rollback restored the previous driver exactly). The stage 1 installer has still not run on a camera. Stage 2's payload was installed and verified on the unit; its installer script was hardened after review and has been run only by the fixture tests.
 - **No restore of the factory firmware has ever been tested.** Two identical reads prove consistency, not that writing them back works.
 
 ## Things that are guesses
@@ -16,11 +16,12 @@ Read this before trusting any part of the project.
 - The meaning of power status 2 (charging versus full).
 - The panel controller and FPC pinout.
 - That the Hi3861 identification of the coprocessor is exact.
-- The cause of the occasional early-boot restart.
+- The cause of the occasional early-boot restart (seen on 2026-11-20: once in the first reboot and twice in the second, after "Starting mdev..." or earlier and before any Doorview hook; the last attempt of each sequence completed, and the camera was on USB or battery, not established).
 - Whether a PIR sensor is present and usable (the factory configuration says `support_pir=1`; nothing was tested).
 
 ## Not implemented
 
+- A default route: stages 1 and 2 set only the on-link route, so the camera cannot reach another subnet (observed 2026-11-20: `nc` to a broker in another subnet failed with "Network unreachable" and succeeded after `ip route add default via <router>` in RAM). Stage 3 adds it from `gateway=` in `mqtt.conf`. The first on-camera boot of that path failed: BusyBox `ip route show default` prints the whole routing table, so the first version of `S97doorview-mqtt` concluded a default route existed. It was fixed (it now looks for a `default` line) and the tests' `ip` stand-in now behaves like BusyBox; the fixed hook then added `default via <router>` by itself on the next boot (observed 2026-11-20).
 - DHCP, automatic Wi-Fi reconnect (an optional watchdog exists, off, and its recovery step is unproven), WPA3, open networks, 5 GHz, SSIDs or passphrases over 31 bytes.
 - Signal strength and access-point information (the factory command exists; it was never sent because commands to the MCU are risky).
 - TLS for MQTT.

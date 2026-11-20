@@ -14,7 +14,7 @@ Developed and tested on **one** RH-PD10 (Goke GK7202V300, 8 MiB SPI NOR, GC2053 
 | Wi-Fi (2.4 GHz WPA2, static IPv4) through the coprocessor | works; needs our SDIO drivers, which are in [`firmware/kernel/`](firmware/kernel) |
 | RTSP and HTTP video | works at 640 × 360, 5 fps; 1080p is too slow over the SDIO link |
 | Front button lights the LCD with a 30 s live preview | works |
-| Battery, USB and button as MQTT/Home Assistant entities | an earlier daemon build ran from RAM on the camera; the build now in the repository was fixed after code review and has run only in tests and under `qemu-user`; persistent install not done |
+| Battery, USB and button as MQTT/Home Assistant entities | installed on the camera (stage 3), connects to a broker with authentication and publishes to Home Assistant; observed over minutes and two reboots, not yet over days |
 
 What is **not** done or not known (battery scale, charge state, PIR, audio, DHCP, reconnect, person detection and more) is in [known limits](docs/known-limits.md). Please read it before you flash.
 
@@ -37,7 +37,7 @@ What is **not** done or not known (battery scale, charge state, PIR, audio, DHCP
 | `tests/run-all.sh` | every test suite that does not need a camera |
 | [`AGENTS.md`](AGENTS.md) | operating and approval rules for the project |
 
-Binaries are included only where they were tested on a camera, with one exception: `doorview-mqtt` was rebuilt after code review and has not run on a camera yet (see [known limits](docs/known-limits.md)). Their hashes, and whether a rebuild reproduces them, are in `firmware/EXPECTED-BUILDS.txt`. The factory firmware, flash dumps, extracted factory files and the proprietary vendor video module are **not** in this repository.
+Binaries are included only where they were tested on a camera, with one caveat: `doorview-mqtt` was rebuilt after code review and has so far run on a camera only for minutes (see [known limits](docs/known-limits.md)). Their hashes, and whether a rebuild reproduces them, are in `firmware/EXPECTED-BUILDS.txt`. The factory firmware, flash dumps, extracted factory files and the proprietary vendor video module are **not** in this repository.
 
 ## How the work is organised
 

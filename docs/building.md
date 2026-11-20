@@ -45,7 +45,7 @@ tools/fetch-vendor.sh          # stage 2 only
 tools/package.sh stage1-wifi   # or stage2-lcd, stage3-mqtt
 ```
 
-writes `build/packages/<stage>/` (installer, payload, `SHA256SUMS`) and `build/packages/<stage>.tar.gz`. The stage 2 payload is identical to the package that was installed and tested on the camera. The stage 3 payload differs only in `doorview-mqtt`, which was rebuilt after code review (see [known limits](known-limits.md)). The stage 2 and 3 installers were changed after review (a mandatory manifest entry for every file; the backup of the replaced file is kept when the automatic restore fails) and have been run only by the fixture tests.
+writes `build/packages/<stage>/` (installer, payload, `SHA256SUMS`) and `build/packages/<stage>.tar.gz`. The stage 2 payload is identical to the package that was installed and tested on the camera. The stage 3 payload differs only in `doorview-mqtt`, which was rebuilt after code review (see [known limits](known-limits.md)). The stage 2 and 3 installers were changed after review (a mandatory manifest entry for every file; the backup of the replaced file is kept when the automatic restore fails). The stage 3 installer has since run on the camera; the stage 2 installer has been run only by the fixture tests.
 
 ## Tests
 

@@ -16,9 +16,21 @@ running() {
     esac
 }
 
+# The camera only has the on-link route of its own subnet. A broker in another subnet needs a default route,
+# which the Wi-Fi hook does not set. Optional "gateway=<IPv4>" in the configuration (ignored by the daemon).
+ensure_default_route() {
+    gateway=$(awk -F= '$1 == "gateway" { value = $2 } END { sub(/\r$/, "", value); print value }' "$config")
+    [ -n "$gateway" ] || return 0
+    printf '%s\n' "$gateway" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$' || return 0
+    # BusyBox "ip route show default" prints the whole table, so look for the default entry ourselves.
+    ! ip route 2> /dev/null | grep -q '^default ' || return 0
+    ip route add default via "$gateway" || echo "Doorview MQTT: cannot add the default route via $gateway" >&2
+}
+
 start() {
     # Not configured yet (no broker address or credentials): do nothing.
     [ -r "$config" ] || return 0
+    ensure_default_route
     [ -x "$daemon" ] || return 1
     running && return 0
     nohup "$daemon" "$config" > "$log" 2>&1 < /dev/null &

@@ -55,13 +55,13 @@ Private material lives **outside** the repository (flash dumps, overlay backups,
 | OpenIPC compatibility | confirmed on one unit (GK7202V300, Linux 4.9.37) |
 | Wi-Fi, RTSP/HTTP | works at 640×360, 5 fps (stage 1 and 2) |
 | LCD preview and front button | works (stage 2) |
-| MQTT / Home Assistant | an earlier daemon build ran from RAM on the camera; the current build (SIGPIPE and receive-buffer fixes) ran only in Docker and under `qemu-user`; **not installed persistently**; needs a broker (separate infrastructure, not in this repository) |
+| MQTT / Home Assistant | stage 3 installed on the camera (2026-11-20): connects to the broker, publishes discovery and state, reconnects after reboots; only minutes of runtime; the broker is separate infrastructure, not in this repository |
 | Battery monitoring | MCU power frames decoded; capacity scale and charge state unconfirmed |
 | Reliable startup, recovery, update | startup works after a cold start; no automatic Wi-Fi reconnect; no OTA |
 
 ## Next work (in a sensible order)
 
-1. Install stage 3 on the camera once a broker is verified reachable from the camera's network (fresh overlay backup, approval). This is also the first run on a camera of the rebuilt `doorview-mqtt` and of the hardened stage 2 and 3 installers; update `docs/known-limits.md` and the README when it succeeds.
+1. Observe stage 3 over days: Home Assistant values (battery, USB, button), broker outages, reconnects. Stages 1 and 2 set no default route; stage 3 adds it from `gateway=` in `mqtt.conf`.
 2. Wi-Fi health: understand the dead-data-path state, then decide on a reconnect or watchdog that is proven to recover (the optional `wifi_watchdog` is unproven and off).
 3. Long-run stability of the interrupt-driven driver (only about 100 minutes observed) and the cause of the occasional early-boot restart.
 4. Signal strength and access-point info (needs the RSSI query; warn first).

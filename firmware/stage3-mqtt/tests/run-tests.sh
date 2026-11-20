@@ -215,6 +215,9 @@ check 'it is replaced with --replace' configure "$work/good.conf" --replace
 output=$(configure "$work/good.conf" --replace 2>&1)
 check 'the password is never printed' test "$(printf '%s' "$output" | grep -c 's3cret-value')" = 0
 check 'no temporary files left behind' test -z "$(find "$root/etc" -name '.*' -not -name . -not -name .. 2> /dev/null)"
+printf 'gateway=192.0.2.1\n' | cat "$work/good.conf" - > "$work/gateway.conf"
+check 'a configuration with a gateway is installed' configure "$work/gateway.conf" --replace
+check 'the gateway is kept in mqtt.conf' grep -qx 'gateway=192.0.2.1' "$root/etc/doorview/mqtt.conf"
 
 root="$work/root-config-bad"
 build_root "$root"
@@ -244,6 +247,14 @@ command=run-this"
 check_fails 'a password that is too long is rejected' try_bad "host=192.0.2.20
 user=a
 password=$(printf 'x%.0s' $(seq 1 80))"
+check_fails 'a gateway that is not an IPv4 address is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+gateway=router.local"
+check_fails 'a gateway with extra characters is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+gateway=192.0.2.1; reboot"
 ln -s "$work/good.conf" "$work/link.conf"
 check_fails 'a symlink as input is rejected' sh -c "DOORVIEW_ROOT='$root' sh '$here/configure.sh' '$work/link.conf'"
 check 'rejected configurations write nothing' test ! -e "$root/etc/doorview/mqtt.conf"
@@ -288,6 +299,55 @@ s97 stop > /dev/null 2>&1
 chmod 600 "$case_dir/daemon"
 check_fails 'a daemon that is not executable fails the start' s97 start
 check_fails 'an unknown action is rejected' s97 bogus
+
+echo '== S97doorview-mqtt default route =='
+
+# A stand-in for BusyBox ip(8), which is what the camera has: the route list is always the whole table
+# (a "show default" selector is not applied), and DEFAULT_ROUTE adds a default entry to it.
+shim="$work/ip-shim"
+mkdir -p "$shim"
+cat > "$shim/ip" << 'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >> "$IP_LOG"
+case "$*" in
+    route|'route show'|'route show default')
+        echo '192.0.2.0/24 dev dv0 scope link  src 192.0.2.10'
+        [ -z "${DEFAULT_ROUTE:-}" ] || echo "default via $DEFAULT_ROUTE dev dv0"
+        ;;
+    'route add default via '*) [ -z "${IP_FAIL:-}" ] || exit 2 ;;
+esac
+exit 0
+EOF
+chmod 755 "$shim/ip"
+IP_LOG="$case_dir/ip.log"
+export IP_LOG
+chmod 755 "$case_dir/daemon"
+# $1 = configuration text, $2 = existing default route (may be empty), $3 = non-empty makes "ip route add" fail.
+s97_route() {
+    : > "$IP_LOG"
+    : > "$LOG"
+    printf '%s\n' "$1" > "$case_dir/mqtt.conf"
+    env PATH="$shim:$PATH" DEFAULT_ROUTE="${2:-}" IP_FAIL="${3:-}" DOORVIEW_MQTT_DAEMON="$case_dir/daemon" DOORVIEW_MQTT_CONFIG="$case_dir/mqtt.conf" DOORVIEW_MQTT_PIDFILE="$case_dir/pid" DOORVIEW_MQTT_LOG="$case_dir/out.log" sh "$here/payload/etc/init.d/S97doorview-mqtt" start
+    status=$?
+    wait_for_lines "$LOG" 1 5 || true
+    s97 stop > /dev/null 2>&1
+    return $status
+}
+check 'a gateway in the configuration becomes the default route' s97_route 'host=192.0.2.20
+gateway=192.0.2.1'
+check 'the route is added with exactly that gateway' grep -qx 'route add default via 192.0.2.1' "$IP_LOG"
+check 'no gateway means no route is added' s97_route 'host=192.0.2.20'
+check 'nothing was added without a gateway' test "$(grep -c 'route add' "$IP_LOG")" = 0
+check 'an invalid gateway is ignored' s97_route 'host=192.0.2.20
+gateway=192.0.2.1; reboot'
+check 'nothing was added for an invalid gateway' test "$(grep -c 'route add' "$IP_LOG")" = 0
+check 'an existing default route is kept' s97_route 'host=192.0.2.20
+gateway=192.0.2.1' 192.0.2.254
+check 'nothing was added over an existing default route' test "$(grep -c 'route add' "$IP_LOG")" = 0
+check 'a failing route command does not stop the daemon' s97_route 'host=192.0.2.20
+gateway=192.0.2.1' '' 1
+check 'the route command was attempted' grep -qx 'route add default via 192.0.2.1' "$IP_LOG"
+check 'the daemon was started despite the failed route' test "$(wc -l < "$LOG" | tr -d ' ')" -ge 1
 
 echo "passed=$passed failed=$failed"
 [ "$failed" = 0 ]
