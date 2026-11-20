@@ -302,14 +302,18 @@ check_fails 'an unknown action is rejected' s97 bogus
 
 echo '== S97doorview-mqtt default route =='
 
-# A stand-in for ip(8): records the calls; DEFAULT_ROUTE makes "route show default" print a route.
+# A stand-in for BusyBox ip(8), which is what the camera has: the route list is always the whole table
+# (a "show default" selector is not applied), and DEFAULT_ROUTE adds a default entry to it.
 shim="$work/ip-shim"
 mkdir -p "$shim"
 cat > "$shim/ip" << 'EOF'
 #!/bin/sh
 printf '%s\n' "$*" >> "$IP_LOG"
 case "$*" in
-    'route show default') [ -z "${DEFAULT_ROUTE:-}" ] || echo "default via $DEFAULT_ROUTE dev dv0" ;;
+    route|'route show'|'route show default')
+        echo '192.0.2.0/24 dev dv0 scope link  src 192.0.2.10'
+        [ -z "${DEFAULT_ROUTE:-}" ] || echo "default via $DEFAULT_ROUTE dev dv0"
+        ;;
     'route add default via '*) [ -z "${IP_FAIL:-}" ] || exit 2 ;;
 esac
 exit 0

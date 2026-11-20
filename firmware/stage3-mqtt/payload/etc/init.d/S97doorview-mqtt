@@ -22,7 +22,8 @@ ensure_default_route() {
     gateway=$(awk -F= '$1 == "gateway" { value = $2 } END { sub(/\r$/, "", value); print value }' "$config")
     [ -n "$gateway" ] || return 0
     printf '%s\n' "$gateway" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$' || return 0
-    [ -z "$(ip route show default 2> /dev/null)" ] || return 0
+    # BusyBox "ip route show default" prints the whole table, so look for the default entry ourselves.
+    ! ip route 2> /dev/null | grep -q '^default ' || return 0
     ip route add default via "$gateway" || echo "Doorview MQTT: cannot add the default route via $gateway" >&2
 }
 

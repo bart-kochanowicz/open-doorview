@@ -16,12 +16,12 @@ Read this before trusting any part of the project.
 - The meaning of power status 2 (charging versus full).
 - The panel controller and FPC pinout.
 - That the Hi3861 identification of the coprocessor is exact.
-- The cause of the occasional early-boot restart.
+- The cause of the occasional early-boot restart (seen again on 2026-11-20, once, after "Starting mdev..." and before any Doorview hook; the next boot completed).
 - Whether a PIR sensor is present and usable (the factory configuration says `support_pir=1`; nothing was tested).
 
 ## Not implemented
 
-- A default route: stages 1 and 2 set only the on-link route, so the camera cannot reach another subnet (observed 2026-11-20: `nc` to a broker in another subnet failed with "Network unreachable" and succeeded after `ip route add default via <router>` in RAM). Stage 3 adds it from `gateway=` in `mqtt.conf`; that boot-time path is covered by tests only, not yet run on a camera.
+- A default route: stages 1 and 2 set only the on-link route, so the camera cannot reach another subnet (observed 2026-11-20: `nc` to a broker in another subnet failed with "Network unreachable" and succeeded after `ip route add default via <router>` in RAM). Stage 3 adds it from `gateway=` in `mqtt.conf`. The first on-camera boot of that path failed: BusyBox `ip route show default` prints the whole routing table, so the first version of `S97doorview-mqtt` concluded a default route existed. It was fixed (it now looks for a `default` line) and the tests' `ip` stand-in now behaves like BusyBox; the fixed hook has not yet run at boot on a camera.
 - DHCP, automatic Wi-Fi reconnect (an optional watchdog exists, off, and its recovery step is unproven), WPA3, open networks, 5 GHz, SSIDs or passphrases over 31 bytes.
 - Signal strength and access-point information (the factory command exists; it was never sent because commands to the MCU are risky).
 - TLS for MQTT.
