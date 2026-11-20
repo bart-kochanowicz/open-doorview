@@ -91,7 +91,7 @@ python3 tools/backup-overlay.py overlay-b.bin < "$DOORVIEW_PW"
 shasum -a 256 overlay-a.bin overlay-b.bin     # must match
 ```
 
-This reads `/dev/mtdblock5` read-only over the UART and takes a few minutes. Keep the files private (they will contain your Wi-Fi password after stage 1). Repeat before each later stage; the overlay changes with every install.
+This reads `/dev/mtdblock5` read-only over the UART and takes a few minutes. Keep the files private (they will contain your Wi-Fi password after stage 1). Repeat before each later stage; the overlay changes with every install. The two files must be identical: if they differ, something wrote to the overlay between the reads (the cron job that saves the clock, or the shell history of your own sessions), so take the pair again without running other commands in between.
 
 ## Step 6. Stage 1: Wi-Fi base
 

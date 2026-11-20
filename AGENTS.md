@@ -55,15 +55,15 @@ Private material lives **outside** the repository (flash dumps, overlay backups,
 | OpenIPC compatibility | confirmed on one unit (GK7202V300, Linux 4.9.37) |
 | Wi-Fi, RTSP/HTTP | works at 640×360, 5 fps (stage 1 and 2) |
 | LCD preview and front button | works (stage 2) |
-| MQTT / Home Assistant | stage 3 installed on the camera (2026-11-20): connects to the broker, publishes discovery and state, reconnects after reboots; only minutes of runtime; the optional motion sensor in the newer daemon build ran from RAM only; the broker is separate infrastructure, not in this repository |
+| MQTT / Home Assistant | stage 3 installed on the camera (2026-11-20) with the newer daemon and `motion=1`: connects to the broker, publishes discovery and state, reconnects after reboots; hours of runtime, three reboots; the motion sensor works in hand-waving tests; the broker is separate infrastructure, not in this repository |
 | Battery monitoring | MCU power frames decoded; capacity scale and charge state unconfirmed |
 | Reliable startup, recovery, update | startup works after a cold start; no automatic Wi-Fi reconnect; no OTA |
 
 ## Next work (in a sensible order)
 
-1. Install the newer `doorview-mqtt` (motion sensor) with `motion=1` and enable `motionDetect` in `/etc/majestic.yaml` (rollback and install stage 3 again, `configure.sh --replace`; each flash write needs approval and a fresh overlay backup), then observe over days; tune false alarms. Observe stage 3 over days: Home Assistant values (battery, USB, button), broker outages, reconnects. Stages 1 and 2 set no default route; stage 3 adds it from `gateway=` in `mqtt.conf`.
+1. Observe stage 3 and the motion sensor over days: Home Assistant values (battery, USB, button, motion), broker outages, reconnects, false alarms (tune `motionDetect` sensitivity and region of interest). Stages 1 and 2 set no default route; stage 3 adds it from `gateway=` in `mqtt.conf`. Next for the goal "notify when someone is at the door": a dedicated Majestic account and a firewall rule so Home Assistant can fetch `/image.jpg` for a notification.
 2. Wi-Fi health: understand the dead-data-path state, then decide on a reconnect or watchdog that is proven to recover (the optional `wifi_watchdog` is unproven and off).
-3. Long-run stability of the interrupt-driven driver (only about 100 minutes observed) and the cause of the occasional early-boot restart.
+3. Long-run stability of the interrupt-driven driver (only about 100 minutes observed) and the cause of the early-boot resets (two before every successful software reboot so far).
 4. Signal strength and access-point info (needs the RSSI query; warn first).
 5. Battery: confirm the capacity scale and the meaning of status 2 by observing a discharge and a full charge.
 6. PIR: check whether the sensor is usable (`support_pir=1` in the factory config).
