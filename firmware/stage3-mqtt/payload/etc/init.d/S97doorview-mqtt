@@ -1,0 +1,45 @@
+#!/bin/sh
+
+daemon=${DOORVIEW_MQTT_DAEMON:-/etc/doorview/doorview-mqtt}
+config=${DOORVIEW_MQTT_CONFIG:-/etc/doorview/mqtt.conf}
+pidfile=${DOORVIEW_MQTT_PIDFILE:-/tmp/doorview-mqtt.pid}
+log=${DOORVIEW_MQTT_LOG:-/tmp/doorview-mqtt.log}
+
+running() {
+    [ -r "$pidfile" ] && read -r pid < "$pidfile" || return 1
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    kill -0 "$pid" 2> /dev/null || return 1
+    # The pid file lives in tmpfs, but make sure the pid still belongs to the daemon.
+    [ ! -r "/proc/$pid/cmdline" ] || case "$(tr '\0' ' ' < "/proc/$pid/cmdline")" in
+        "$daemon "*) ;;
+        *) return 1 ;;
+    esac
+}
+
+start() {
+    # Not configured yet (no broker address or credentials): do nothing.
+    [ -r "$config" ] || return 0
+    [ -x "$daemon" ] || return 1
+    running && return 0
+    nohup "$daemon" "$config" > "$log" 2>&1 < /dev/null &
+    echo $! > "$pidfile"
+}
+
+stop() {
+    running || { rm -f "$pidfile"; return 0; }
+    kill -TERM "$pid" || return 1
+    for attempt in 1 2 3 4 5; do
+        running || break
+        sleep 1
+    done
+    ! running || return 1
+    rm -f "$pidfile"
+}
+
+case "${1:-}" in
+    start) start ;;
+    stop) stop ;;
+    restart) stop && start ;;
+    status) if running; then echo 'Doorview MQTT running'; else echo 'Doorview MQTT stopped'; exit 1; fi ;;
+    *) echo "Usage: $0 {start|stop|restart|status}" >&2; exit 2 ;;
+esac

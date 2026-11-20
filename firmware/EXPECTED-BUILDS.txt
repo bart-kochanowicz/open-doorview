@@ -1,0 +1,14 @@
+# SHA-256 of the binaries that were built and tested on a camera. tools/build.sh compares a fresh build against this list.
+# Columns: hash, file name, kind
+#   reproducible   a fresh build with the pinned sources and toolchain must give exactly this file
+#   not-identical  the tested binary was built with command lines that were not recorded; a fresh build is
+#                  functionally the same source but not bit-identical, and has NOT been tested on a camera
+#   source-lost    the tested binary was built from an earlier revision of the source that was not preserved
+80cfb8bfb7497d00062cb6bfe758fd3e089d561d2405dd2e0441207ef5271304  syslink_poll.ko  reproducible
+cfd9dd4f2dd41d30d0521f79cc11bb14281d7aee2f9bea17dcfdc1734aa7b585  syslink_net.ko  reproducible
+a3021d63c3f97c160a8187b2a780151a3b2b9b97ac1477416e99aacc68e06156  syslink_net_irq-stage2.ko  reproducible
+04697404536fd72aa3097d15ef1632f63d78bf968953887a32064cd98695a463  syslink_net_irq.ko  reproducible
+a21e588ba837f217edcbb9d77c35181f436a6e8409925b0bbbc5809d42358911  syslink_bg.ko  source-lost
+d628a47ce505e1e7e29d312df28e3a748c7d80bf3e8fe8096b7052f3c2918f5a  doorview-mqtt  reproducible
+329a5ff75f75135000cbc7749a5cc8ecc4ab4293db7cf8d810d9c6c34f405bc9  button-preview  not-identical
+5dcad652596d62389e5b92fbc0265dff3c8629542d52e8f32055383ce29e178c  vo-live-30  not-identical

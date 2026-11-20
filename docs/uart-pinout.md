@@ -2,7 +2,9 @@
 
 ## Status
 
-The initial notes mention two groups of pads labelled `RXD`, `TXD`, `GND`, and, on one group, `1.8V`. Their physical arrangement, connection to the main SoC and signal levels are **not verified in this repository**. A prior report of approximately 1.8 V on an idle TXD pad has no recorded measurement conditions. Do not use an assumed diagram as a pinout.
+A working console exists: **115200 baud, 8N1, 1.8 V logic**, with camera TX to adapter RX and a common ground for passive capture, and adapter TX to camera RX added for an interactive root shell once the level was validated. A PL2303G-based adapter was used. The factory RTOS, U-Boot and Linux all print on it.
+
+Not recorded in this repository: the physical location of the pads on the board, photographs, and measurement conditions for the 1.8 V reading. Do not use an assumed diagram as a pinout; identify and measure the pads on your own board.
 
 ## Preparation
 
