@@ -14,7 +14,7 @@ Developed and tested on **one** RH-PD10 (Goke GK7202V300, 8 MiB SPI NOR, GC2053 
 | Wi-Fi (2.4 GHz WPA2, static IPv4) through the coprocessor | works; needs our SDIO drivers, which are in [`firmware/kernel/`](firmware/kernel) |
 | RTSP and HTTP video | works at 640 × 360, 5 fps; 1080p is too slow over the SDIO link |
 | Front button lights the LCD with a 30 s live preview | works |
-| Battery, USB and button as MQTT/Home Assistant entities | works from RAM; persistent install not done |
+| Battery, USB and button as MQTT/Home Assistant entities | an earlier daemon build ran from RAM on the camera; the build now in the repository was fixed after code review and has run only in tests and under `qemu-user`; persistent install not done |
 
 What is **not** done or not known (battery scale, charge state, PIR, audio, DHCP, reconnect, person detection and more) is in [known limits](docs/known-limits.md). Please read it before you flash.
 
@@ -37,17 +37,16 @@ What is **not** done or not known (battery scale, charge state, PIR, audio, DHCP
 | `tests/run-all.sh` | every test suite that does not need a camera |
 | [`AGENTS.md`](AGENTS.md) | operating and approval rules for the project |
 
-Binaries are included only where they were tested on a camera and are listed with their hashes in `firmware/EXPECTED-BUILDS.txt`. The factory firmware, flash dumps, extracted factory files and the proprietary vendor video module are **not** in this repository.
+Binaries are included only where they were tested on a camera, with one exception: `doorview-mqtt` was rebuilt after code review and has not run on a camera yet (see [known limits](docs/known-limits.md)). Their hashes, and whether a rebuild reproduces them, are in `firmware/EXPECTED-BUILDS.txt`. The factory firmware, flash dumps, extracted factory files and the proprietary vendor video module are **not** in this repository.
 
-## Workflow
+## How the work is organised
 
-1. **Diagnose:** identify the board and capture a complete boot cycle through passive UART.
-2. **Preserve:** identify the flash and obtain two matching, complete reads before considering modifications.
-3. **Analyze:** work on copies of the backup and document findings, including the actual [flash layout](docs/flash-layout.md).
-4. **Investigate compatibility:** confirm the exact SoC and supporting hardware before evaluating OpenIPC or other platforms.
-5. **Develop and integrate:** establish a recoverable boot path, then investigate camera, networking, local streaming, Home Assistant, display and power management.
+Each step depends on evidence from the one before; do not skip ahead.
 
-Each stage depends on evidence from the previous stages. A matching backup alone does not prove that restoration works; recovery must be validated separately.
+1. **Preserve:** two matching, complete reads of the factory flash, kept privately ([flash layout](docs/flash-layout.md)). A matching backup alone does not prove that restoration works; that was never tested.
+2. **Flash:** the OpenIPC image ([OpenIPC](docs/openipc-flash.md)).
+3. **Install the stages in order:** Wi-Fi, LCD and button, MQTT ([install guide](docs/install-guide.md)). Each installer is a flash write with its own rollback.
+4. **Continue the work:** the ordered list is in [AGENTS.md](AGENTS.md#next-work-in-a-sensible-order); open questions are in [known limits](docs/known-limits.md).
 
 ## Safety and privacy
 
