@@ -20,7 +20,7 @@ Look at `dmesg | grep 'FIFO empty'`:
 
 - `ethernet=` stays at a small number (for example 4) and never grows, `ping` of the gateway from the camera fails: the Wi-Fi coprocessor is in a state it will not leave without losing power. **Disconnect all power** (USB and battery, a few seconds), reconnect, and let it boot. A soft `reboot` does not reset it. Repeating station commands (`reconnect`, stop/start/connect) made this worse in testing.
 - `FIFO empty` grows by about 100 per second and `frames` is frozen: this is the polling-driver stall. The stage 2 interrupt-driven driver exists to avoid it. If it happens with stage 2 installed, check `ls /sys/module/syslink_net/parameters/` for `irq_rx`, `rx_gpio`, `rx_poll_ms`: if they are missing, the polling driver was loaded (the interrupt driver failed to start; `dmesg` says why).
-- `station.hex` wrong (typo in the passphrase, SSID with more than 32 bytes): the camera never joins. Recreate it with `make-wifi-config.py` and `configure.sh --replace`.
+- `station.hex` wrong (typo in the passphrase, SSID or passphrase with more than 31 bytes): the camera never joins. Recreate it with `make-wifi-config.py` and `configure.sh --replace`.
 
 **Joined, but only some hosts can reach it.** Early drivers did not always receive ARP requests from other hosts (the gateway's got through). In testing, a directed ARP request sent *from* the camera to the client populated both neighbour caches and restored access; that was a diagnostic helper and is not shipped. The cause was never found. Prefer a static reservation on a normal, non-isolated network, and test from a second client.
 

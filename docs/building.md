@@ -45,7 +45,7 @@ tools/fetch-vendor.sh          # stage 2 only
 tools/package.sh stage1-wifi   # or stage2-lcd, stage3-mqtt
 ```
 
-writes `build/packages/<stage>/` (installer, payload, `SHA256SUMS`) and `build/packages/<stage>.tar.gz`. For the two stages that existed before this repository (2 and 3), the package contents are identical to the archives that were tested on the camera.
+writes `build/packages/<stage>/` (installer, payload, `SHA256SUMS`) and `build/packages/<stage>.tar.gz`. The stage 2 payload is identical to the package that was installed and tested on the camera. The stage 3 payload differs only in `doorview-mqtt`, which was rebuilt after code review (see [known limits](known-limits.md)). The stage 2 and 3 installers were changed after review (a mandatory manifest entry for every file; the backup of the replaced file is kept when the automatic restore fails) and have been run only by the fixture tests.
 
 ## Tests
 
@@ -55,10 +55,10 @@ tests/run-all.sh
 
 | Suite | What it covers | Needs |
 |---|---|---|
-| `firmware/stage1-wifi/tests` (70) | installer, rollback and `configure.sh` on temporary trees: refusals, exact restoration after an injected failure, modes, no credentials in output | POSIX shell |
-| `firmware/stage2-lcd/tests` (46) | installer and rollback; the selection logic of `S41doorview-network` (IRQ preferred, polling fallback, heartbeat restore) and `S96doorview-lcd` with stubbed commands | POSIX shell |
-| `firmware/stage3-mqtt/tests` (56) | installer, rollback, `configure.sh` (rejects hostnames, over-long values, symlinks) and `S97doorview-mqtt` with a stub daemon | POSIX shell |
-| `firmware/userland/mqtt/tests` (46) | the daemon against a real Mosquitto with authentication and ACLs: discovery, retained state, button de-duplication, capacity validation, last will after `kill -9`, reconnect, wrong password, ACL denial | Docker |
-| `tools/tests` (26) | `make-wifi-config.py` and `jffs2-files.py` | Python 3 |
+| `firmware/stage1-wifi/tests` (74) | installer, rollback and `configure.sh` on temporary trees: refusals, exact restoration after an injected failure, modes, no credentials in output | POSIX shell |
+| `firmware/stage2-lcd/tests` (53) | installer and rollback; the selection logic of `S41doorview-network` (IRQ preferred, polling fallback, heartbeat restore) and `S96doorview-lcd` with stubbed commands | POSIX shell |
+| `firmware/stage3-mqtt/tests` (63) | installer, rollback, `configure.sh` (rejects hostnames, over-long values, symlinks) and `S97doorview-mqtt` with a stub daemon | POSIX shell |
+| `firmware/userland/mqtt/tests` (49) | the daemon against a real Mosquitto with authentication and ACLs: discovery, retained state, button de-duplication, capacity validation, last will after `kill -9`, reconnect, wrong password, ACL denial | Docker |
+| `tools/tests` (29) | `make-wifi-config.py` and `jffs2-files.py` | Python 3 |
 
 The installer tests only prove the **logic** of the installers on a fake root. They cannot prove how the real overlay behaves. Where a test is a safety property (a refusal that must change nothing, a rollback that must restore the exact tree), it was checked by mutation: a deliberately broken copy of the installer must make the suite fail. Several tests were found vacuous that way and fixed.

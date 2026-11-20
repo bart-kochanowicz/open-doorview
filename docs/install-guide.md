@@ -103,7 +103,7 @@ python3 tools/make-wifi-config.py --ssid "YourNetwork" --address 192.0.2.10/24 -
 
 - `--address` is a **static** IPv4 address and prefix on your camera's network. Reserve it in your router. DHCP from the camera was never verified.
 - `--mac` is the value from step 2.
-- SSID and passphrase are each limited to 32 bytes by the firmware; the radio is 2.4 GHz only.
+- SSID and passphrase are each limited to 31 bytes by the drivers; the radio is 2.4 GHz only.
 
 Build the package, pack the configuration and send both. The archives travel as base64 over the UART at roughly 800 bytes per second, so this takes about a minute. They unpack into `/tmp/lcd-vo-test` on the camera (the directory name is historical); the file names of the two archives do not collide:
 

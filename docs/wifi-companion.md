@@ -34,7 +34,7 @@ The factory firmware's configuration also lists an ADC channel for day/night det
 
 Behaviour you should know about:
 
-- **Only 2.4 GHz WPA2-PSK was used.** Open networks, WPA3 and 33 to 63 character passphrases are not supported by the 32-byte fields.
+- **Only 2.4 GHz WPA2-PSK was used.** Open networks, WPA3 and passphrases of 32 to 63 characters are not supported: the fields are 32 bytes and the drivers reject a field whose last byte is not NUL, so SSID and passphrase are limited to 31 bytes.
 - **DHCP never produced a lease** in testing; a static IPv4 address is configured instead. Ask your router to reserve it.
 - On the first drivers, ARP requests *from other hosts* did not always reach the camera (the gateway's did). The cause was not established; the interrupt-driven driver with the duplicate filter did not show it again, but cold-neighbour-cache behaviour from a second client was never systematically retested.
 

@@ -6,7 +6,8 @@ Read this before trusting any part of the project.
 
 - **One camera.** Everything was developed and tested on a single RH-PD10. Another unit, batch or firmware revision may differ (the board, the MCU firmware, the flash layout).
 - **Days, not months.** The longest uninterrupted observation of the interrupt-driven driver is 47 minutes; about 100 minutes in total. Earlier failures appeared at random up to 31 minutes. Rare failures cannot be excluded.
-- **Stage 1 and 3 installers are new.** The stage 1 installer was written for this repository and has been tested only on fixture trees (the unit received its stage 1 files through earlier scripts that did not survive in this form). Stage 3 has never been installed persistently. Stage 2 was installed and verified on the unit.
+- **The shipped `doorview-mqtt` was rebuilt after code review** (SIGPIPE handling and a receive-buffer fix) and has not run on a camera since. It was exercised by the Docker suite (including an ASan/UBSan build against a broker that drops the connection) and, as the real freestanding ARM binary, under `qemu-user`, where the previous build died with SIGPIPE and the new one reconnects.
+- **Stage 1 and 3 installers are new.** The stage 1 installer was written for this repository and has been tested only on fixture trees (the unit received its stage 1 files through earlier scripts that did not survive in this form). Stage 3 has never been installed persistently. Stage 2's payload was installed and verified on the unit; its installer script was hardened after review and has been run only by the fixture tests.
 - **No restore of the factory firmware has ever been tested.** Two identical reads prove consistency, not that writing them back works.
 
 ## Things that are guesses
@@ -20,7 +21,7 @@ Read this before trusting any part of the project.
 
 ## Not implemented
 
-- DHCP, automatic Wi-Fi reconnect (an optional watchdog exists, off, and its recovery step is unproven), WPA3, open networks, 5 GHz, passphrases over 32 bytes.
+- DHCP, automatic Wi-Fi reconnect (an optional watchdog exists, off, and its recovery step is unproven), WPA3, open networks, 5 GHz, SSIDs or passphrases over 31 bytes.
 - Signal strength and access-point information (the factory command exists; it was never sent because commands to the MCU are risky).
 - TLS for MQTT.
 - Audio, the speaker and microphone, the IR cut filter and IR LEDs, the PIR, the battery fuel gauge beyond the MCU's value.
