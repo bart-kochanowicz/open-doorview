@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This repository documents the recovery and custom firmware development for the RH-PD10 smart door peephole camera. The project follows a careful, evidence-based approach to diagnose hardware failures, backup original firmware, reverse engineer the system architecture, and develop safe custom firmware solutions.
+This repository holds the recovery procedures and the custom firmware layer for the RH-PD10 smart door peephole camera: OpenIPC plus our own Wi-Fi/SDIO drivers, LCD and button service, and an MQTT publisher for Home Assistant. It is the reference for anyone flashing their own unit and for agents continuing the work. The project follows a careful, evidence-based approach; the sections below give the safety rules, the repository map, working rules, the current state and the next work.
 
 ## Safety Rules (Non-Negotiable)
 
@@ -19,114 +19,62 @@ This repository documents the recovery and custom firmware development for the R
 11. **Preserve original binary images securely**. They may contain Wi-Fi credentials, tokens, or unique device secrets. Do not publish complete dumps to public Git repositories.
 12. **If in-circuit programming is unreliable**, stop and report the risk of bus contention or back-powering. Consider chip removal only as an explicitly approved later option.
 
-## Phase A — Serial Boot Diagnostics
+## Repository map
 
-### Goal
-Capture and analyze a complete boot cycle to identify reset causes, bootloader, kernel version, storage map, and potential failures.
+| Path | What it is |
+|---|---|
+| `README.md`, `docs/install-guide.md` | what works and the end-to-end install |
+| `docs/` | procedures (`flash-layout.md`, `uart-pinout.md`, `openipc-flash.md`), hardware notes (`wifi-companion.md`, `lcd-and-button.md`, `mqtt-home-assistant.md`), `troubleshooting.md`, `known-limits.md`, `building.md` |
+| `firmware/stage1-wifi`, `stage2-lcd`, `stage3-mqtt` | installable packages: installer, rollback, payload, tests. The stages form a chain; later installers pin the exact files of earlier ones by SHA-256 |
+| `firmware/kernel/` | source of every kernel module, one directory per module |
+| `firmware/userland/` | LCD/button programs and the MQTT daemon |
+| `firmware/EXPECTED-BUILDS.txt` | hashes of the binaries tested on a camera, and whether a rebuild reproduces them |
+| `tools/` | host-side helpers (UART, backup, packaging, build); see `tools/README.md` |
+| `tests/run-all.sh` | every suite that needs no camera |
 
-### Tasks
-1. Identify the serial adapter device under macOS.
-2. Verify the Waveshare adapter's VCCIO configuration and 1.8 V logic level.
-3. Determine which UART test pads connect to the main SoC.
-4. Start passive serial capture.
-5. Test a reasonable baud rate, beginning with 115200 8N1.
-6. Reboot the camera and capture the entire sequence.
-7. Preserve the raw logs.
-8. Identify reset causes, bootloader, kernel version, storage map, and potential failures.
+Private material lives **outside** the repository (flash dumps, overlay backups, UART logs, the root password, Wi-Fi credentials). `.gitignore` is a precaution, not a control.
 
-### Example Commands
-```bash
-ls /dev/cu.*
-picocom -b 115200 /dev/cu.usbserial-XXXX
-```
+## Working rules
 
-## Phase B — SPI Flash Backup
+- **Read first:** `docs/known-limits.md` and the hardware notes for the area you touch. Do not repeat the failures listed in `docs/wifi-companion.md` and `docs/troubleshooting.md`.
+- **Never send a command to the Wi-Fi/battery MCU that the shipped drivers do not already send.** One such experiment silenced the UART and needed a power-button press. Warn the owner before any new MCU command (the RSSI query `0x28` is the known candidate).
+- **Passive before active** on the UART: capture a boot before sending anything after a silence.
+- **Every flash write needs approval immediately beforehand**, including each installer in `firmware/` and `/etc/majestic.yaml`. Take a fresh overlay backup (two identical reads) first; the overlay changes with every install.
+- **Secrets:** the root password and Wi-Fi credentials never go on a command line, into a log, a commit or chat. Use the silent upload and the redacting helpers in `tools/`.
+- **Evidence labels:** in docs say whether a fact was observed on the unit, read from the factory firmware, or assumed. One camera was used; do not generalise.
+- **Tests:** run `tests/run-all.sh` before and after changing an installer or the daemon. A safety property (a refusal that must change nothing, an exact rollback) is only proven if a deliberately broken copy makes the suite fail; do that mutation check for new ones. Installer tests prove logic on a fake root, not behaviour on the real overlay.
+- **Installers:** keep their properties (mount check, no overwrite, hash-verified stage, hooks last, automatic exact rollback, no credentials in output). Changing a shipped file changes a hash that the next stage pins; update the pin and its tests deliberately.
+- **Binaries:** only add a binary to a `payload/` directory after it ran on a camera, and record its hash in `firmware/EXPECTED-BUILDS.txt`. Proprietary vendor blobs are downloaded, never committed. Do not publish factory firmware, dumps or extracted factory files.
+- **Style:** docs and code comments in English. Keep the surrounding code's density and idiom.
 
-### Goal
-Obtain a reproducible, verified image of original flash memory.
+## Current state
 
-### Requirements
-- Verify the exact chip identity against the datasheet.
-- Confirm 1.8 V electrical operation.
-- Verify the 1.8 V adapter protects both supply and signal lines.
-- Confirm SOIC-8 clip orientation and compatibility with 208 mil packaging.
-- Confirm battery and USB have been disconnected.
+| Milestone | State |
+|---|---|
+| Serial diagnostics, verified SPI backup (two identical reads), firmware analysis | done; the factory restore path was never tested |
+| OpenIPC compatibility | confirmed on one unit (GK7202V300, Linux 4.9.37) |
+| Wi-Fi, RTSP/HTTP | works at 640×360, 5 fps (stage 1 and 2) |
+| LCD preview and front button | works (stage 2) |
+| MQTT / Home Assistant | daemon tested from RAM and in Docker; **not installed persistently**; needs a broker (separate infrastructure, not in this repository) |
+| Battery monitoring | MCU power frames decoded; capacity scale and charge state unconfirmed |
+| Reliable startup, recovery, update | startup works after a cold start; no automatic Wi-Fi reconnect; no OTA |
 
-### Example Commands
-```bash
-flashrom -p ch341a_spi
-flashrom -p ch341a_spi -r backup_a.bin
-flashrom -p ch341a_spi -r backup_b.bin
-shasum -a 256 backup_a.bin backup_b.bin
-```
+## Next work (in a sensible order)
 
-## Phase C — Firmware Analysis
-
-### Goal
-Analyze the backed-up image without modifying the original.
-
-### Analysis Scope
-- Bootloader type and version.
-- Partition boundaries.
-- Linux kernel or alternative operating system.
-- Root filesystem format.
-- Compression algorithms.
-- Startup services.
-- Watchdog configuration.
-- Camera sensor drivers.
-- LCD drivers.
-- Wi-Fi stack.
-- Power management.
-- GPIO assignments.
-- Application architecture.
-- OTA update implementation.
-
-### Example Commands
-```bash
-file firmware.bin
-binwalk firmware.bin
-strings firmware.bin
-xxd -l 256 firmware.bin
-```
-
-## Phase D — Hardware Compatibility Investigation
-
-### Goal
-Research OpenIPC compatibility only after the exact SoC is confirmed.
-
-### References
-- https://openipc.org/
-- https://github.com/OpenIPC/firmware
-- https://github.com/OpenIPC/wiki
-- https://buildroot.org/
-
-## Phase E — Custom Firmware Implementation
-
-### Milestones
-1. Controlled boot into a reproducible custom environment.
-2. Basic hardware initialization and debug console.
-3. Working camera sensor and video encoding.
-4. Wi-Fi connectivity and a local API.
-5. RTSP or equivalent local streaming.
-6. MQTT events and Home Assistant integration.
-7. LCD display and physical buttons.
-8. Battery monitoring and low-power operation.
-9. Reliable startup, recovery, and firmware update procedure.
-
-## Technical Roadmap
-
-1. Phase A: Serial diagnostics
-2. Phase B: Flash backup
-3. Phase C: Firmware analysis
-4. Phase D: Hardware compatibility investigation
-5. Phase E: Custom firmware development
-6. Phase F: Home Assistant integration
+1. Install stage 3 on the camera once a broker is verified reachable from the camera's network (fresh overlay backup, approval).
+2. Wi-Fi health: understand the dead-data-path state, then decide on a reconnect or watchdog that is proven to recover (the optional `wifi_watchdog` is unproven and off).
+3. Long-run stability of the interrupt-driven driver (only about 100 minutes observed) and the cause of the occasional early-boot restart.
+4. Signal strength and access-point info (needs the RSSI query; warn first).
+5. Battery: confirm the capacity scale and the meaning of status 2 by observing a discharge and a full charge.
+6. PIR: check whether the sensor is usable (`support_pir=1` in the factory config).
+7. Person detection: the camera triggers and sends a frame, a server classifies, Home Assistant notifies (the SoC has one core, about 27 MB of RAM for Linux and no NPU).
+8. Close the gaps in `docs/known-limits.md`: the unrecorded first-flash method, the lost source of the shipped `syslink_bg.ko`, non-reproducible LCD binaries, a licence file.
 
 ## Evidence Checklist
 
-- [ ] UART serial logs capture
-- [ ] Verified SPI flash backup
-- [ ] Complete firmware analysis
-- [ ] Hardware inventory documented
-- [ ] OpenIPC compatibility confirmed or ruled out
-- [ ] Recovery procedures validated
+- [x] UART serial logs capture
+- [x] Verified SPI flash backup
+- [ ] Complete firmware analysis (the factory RTOS is only partly analysed)
+- [ ] Hardware inventory documented (`docs/hardware-inventory.md` still has open items)
+- [x] OpenIPC compatibility confirmed (one unit)
+- [ ] Recovery procedures validated (restoring the factory flash and the overlay was never tested)
