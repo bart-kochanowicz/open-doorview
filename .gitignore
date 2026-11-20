@@ -13,3 +13,11 @@
 .env
 .env.*
 .DS_Store
+
+# Build output, downloaded vendor blobs and anything that holds Wi-Fi credentials.
+/build/
+/vendor/
+/wifi-config/
+station.hex
+.secrets/
+__pycache__/
