@@ -50,7 +50,7 @@ install -m 600 /dev/null ~/.doorview-root && cat > ~/.doorview-root     # type t
 export DOORVIEW_PW=$HOME/.doorview-root
 ```
 
-After a fresh OpenIPC flash the password is the OpenIPC default (check the OpenIPC wiki for the current value); set your own at once with `passwd`.
+After a fresh OpenIPC flash the password is the OpenIPC default (check the OpenIPC wiki for the current value); set your own at once with `passwd`, long and unique. **This password is the administrator password of the whole camera:** the web interface on port 80 (with a terminal, a configuration API, firmware update and factory reset), RTSP and SSH all use it, in clear text, and there are no other accounts or roles. Do not give it to other systems and keep the camera's network closed to everything that does not need it ([known limits](known-limits.md)).
 
 ## Step 1. Back up the factory flash
 
@@ -181,7 +181,7 @@ python3 tools/upload-archive.py build/packages/stage3-mqtt.tar.gz "$DOORVIEW_PW"
 cd /tmp/doorview-upload && sh install.sh .       # prints MQTT_INSTALLED
 ```
 
-Create the broker settings locally in a file of mode 600 (`host=`, `port=`, `user=`, `password=`, `gateway=` when the broker is in another subnet, and `motion=1` for the optional motion sensor, which also needs `motionDetect` enabled in `/etc/majestic.yaml`; see [Motion](mqtt-home-assistant.md#motion)), upload it with the same silent upload, run `sh configure.sh <file>` (prints `MQTT_CONFIGURED`), delete the local copy, and reboot. Check `cat /tmp/doorview-mqtt.log` and the new device in Home Assistant.
+Create the broker settings locally in a file of mode 600 (`host=`, `port=`, `user=`, `password=`, `gateway=` when the broker is in another subnet, and `motion=1` for the optional motion sensor, which also needs `motionDetect` enabled in `/etc/majestic.yaml`; see [Motion](mqtt-home-assistant.md#motion); and `snapshot=1` to publish a picture when motion starts, see [Snapshot](mqtt-home-assistant.md#snapshot)), upload it with the same silent upload, run `sh configure.sh <file>` (prints `MQTT_CONFIGURED`), delete the local copy, and reboot. Check `cat /tmp/doorview-mqtt.log` and the new device in Home Assistant.
 
 Rollback: upload the same package again and run `sh rollback.sh` from it. It restores the stage 2 driver from the copy the installer kept and removes the daemon and its hook; `mqtt.conf` (credentials) stays until you delete it.
 
