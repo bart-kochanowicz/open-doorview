@@ -50,6 +50,7 @@ Frames with header `0x0034`, `data[32] == 0x8a` carry application messages; `dat
 How to read PowerInfo:
 
 - `usb` is 1 with USB power and 0 without: confirmed by unplugging and replugging (the value changed within one burst each time).
+- After a reboot the first frames can be wrong: on 2026-11-20 the camera, connected to USB, reported `status=1, usb=0, capacity=100` for at least 3 minutes after one boot (earlier boots showed the USB state). The cause is unknown.
 - `status` was **1 on battery and 2 with USB**. Whether 2 means "charging" or "full" is not known.
 - `capacity` showed 99 for every observation, which was taken as percent; **no other value was ever seen**, so the scale is an assumption. A negative value is a "no fresh reading" marker in the factory firmware (the cached value is kept).
 - The factory firmware also has a battery query (`0x92`) that was not tried.

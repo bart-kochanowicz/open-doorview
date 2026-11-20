@@ -2,7 +2,7 @@
 
 `doorview-mqtt` is a small daemon (13 KB, static ARM, no libc) that publishes the camera's battery, external power, button, uptime and, optionally, motion to an MQTT broker, with Home Assistant MQTT discovery so the entities appear on their own. It is stage 3 of the [install guide](install-guide.md#step-8-stage-3-mqtt-for-home-assistant).
 
-**Status:** stage 3 with an earlier build of this daemon is installed on one camera and was observed for minutes and two reboots (see [known limits](known-limits.md)). The build in this repository adds the optional motion sensor and a keepalive fix. It ran from RAM on the camera on 2026-11-20 against the real Mosquitto broker and a real Home Assistant: the Motion entity appeared, went ON when a hand was waved in front of the lens and OFF about 10 s later. It is **not installed persistently** yet. The logic is covered by 77 tests against a real Mosquitto in Docker (`firmware/userland/mqtt/tests/run-tests.sh`), including a fake Majestic and an ASan/UBSan build.
+**Status:** stage 3 is installed on one camera and was observed for minutes to hours and three reboots (see [known limits](known-limits.md)). The build in this repository adds the optional motion sensor and a keepalive fix. It ran from RAM first and was then installed with `motion=1` on 2026-11-20: against the real Mosquitto broker and a real Home Assistant the Motion entity went ON when a hand was waved in front of the lens and OFF about 10 s later, before and after a reboot. The logic is covered by 77 tests against a real Mosquitto in Docker (`firmware/userland/mqtt/tests/run-tests.sh`), including a fake Majestic and an ASan/UBSan build.
 
 ## What it needs
 
