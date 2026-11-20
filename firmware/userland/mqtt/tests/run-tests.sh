@@ -15,6 +15,7 @@ cleanup() {
     [ -z "$daemon_pid" ] || kill -9 "$daemon_pid" 2> /dev/null
     [ -z "$sub_pid" ] || kill "$sub_pid" 2> /dev/null
     [ -z "${majestic_pid:-}" ] || kill -9 "$majestic_pid" 2> /dev/null
+    [ -z "${snap_sub_pid:-}" ] || kill "$snap_sub_pid" 2> /dev/null
     docker rm -f "$broker" > /dev/null 2>&1
     rm -rf "$work"
 }
@@ -78,6 +79,7 @@ topic write doorview/front-door-camera/#
 topic write homeassistant/sensor/front-door-camera/+/config
 topic write homeassistant/binary_sensor/front-door-camera/+/config
 topic write homeassistant/event/front-door-camera/+/config
+topic write homeassistant/image/front-door-camera/+/config
 EOF
 : > "$work/broker/passwd"
 docker run --rm -v "$work/broker:/mosquitto/config" eclipse-mosquitto:2 sh -c \
@@ -309,9 +311,26 @@ HELP = ('# HELP md_onsets_blanked_total Changes the camera made to its own pictu
         '# HELP md_rects_recv_total Number of rectangles returned by HW MD algorithm.\n'
         '# TYPE md_rects_recv_total counter\nmd_rects_recv_total %s\n'
         '# HELP md_rects_acc_total Number of rectangles fit into ROI.\n# TYPE md_rects_acc_total counter\n')
+def serve_image(conn, request_line):
+    mode = read('imgmode', 'normal')
+    image = open(os.path.join(state, 'img'), 'rb').read()
+    if mode == 'notfound':
+        # A valid JPEG body behind a 404: only the status line says it is not the picture.
+        conn.sendall(b'HTTP/1.0 404 Not Found\r\nContent-Length: %d\r\n\r\n' % len(image) + image)
+        return
+    if mode == 'html':
+        image = b'<html>login</html>'
+    elif mode == 'truncated':
+        image = image[:-2]
+    conn.sendall(b'HTTP/1.0 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n' % len(image) + image)
 def serve(conn):
     try:
-        conn.recv(4096)
+        request = conn.recv(4096)
+        line = request.split(b'\r\n', 1)[0]
+        open(os.path.join(state, 'reqs'), 'ab').write(line + b'\n')
+        if line.startswith(b'GET /image.jpg'):
+            serve_image(conn, line)
+            return
         mode, total = read('mode', 'normal'), read('total', '0')
         open(os.path.join(state, 'hits'), 'a').write('x\n')
         if mode == 'auth':
@@ -404,18 +423,151 @@ check 'a late subscriber gets the motion state as retained' grep -qE '^1\|doorvi
 check 'the motion run never reconnected (a busy publisher still pings)' test "$(count_of "$work/daemon-motion.log" 'connected')" = 1
 check_not 'the broker was never taken for dead while the daemon was publishing' grep -qF 'stopped answering' "$work/daemon-motion.log"
 check_not 'the sanitizers report nothing in the motion run' grep -qE 'AddressSanitizer|runtime error' "$work/daemon-motion.log"
+check_not 'without snapshot=1 the daemon never asks Majestic for a picture' grep -q 'image.jpg' "$work/mj/reqs"
+check_not 'without snapshot=1 no image entity is discovered' grep -q 'homeassistant/image' "$work/sub.log"
 kill_daemon
 wait_for "$work/sub.log" '|doorview/front-door-camera/availability|offline' 12
 
+echo '== snapshot =='
+# The picture is read from Majestic on the camera and published to the broker, so Home Assistant never reaches the
+# camera. Binary payloads are compared as hex (mosquitto_sub -F %x).
+make_jpeg() { # <size in bytes>
+    python3 - "$1" "$work/mj/img" "$work/mj/img.hex" << 'PY'
+import os, sys
+size = int(sys.argv[1])
+data = b'\xff\xd8' + os.urandom(size - 4) + b'\xff\xd9'
+open(sys.argv[2], 'wb').write(data)
+open(sys.argv[3], 'w').write(data.hex())
+PY
+}
+snap_count() { wc -l < "$work/snap.log" | tr -d ' '; }
+last_snap_hex() { tail -n 1 "$work/snap.log" | cut -d'|' -f3; }
+wait_snap() { # <count> <seconds>
+    for i in $(seq 1 "$(($2 * 10))"); do [ "$(snap_count)" -ge "$1" ] && return 0; sleep_s 0.1; done
+    return 1
+}
+rise() { snap_total=$((snap_total + 5)); set_total "$snap_total"; }
+start_snap_daemon() { # <cooldown>; waits for the baseline reading, so the next rise is a real rise
+    { cat "$work/mqtt.conf"; printf 'motion=1\nmotion_port=%s\nmotion_hold=2\nsnapshot=1\nsnapshot_cooldown=%s\n' "$motion_port" "$1"; } > "$work/mqtt-snap.conf"
+    hits_before=$(wc -l < "$work/mj/hits" | tr -d ' ')
+    "$work/doorview-mqtt-asan" "$work/mqtt-snap.conf" > "$work/daemon-snap.log" 2>&1 &
+    daemon_pid=$!
+    for i in $(seq 1 50); do [ "$(wc -l < "$work/mj/hits" | tr -d ' ')" -gt "$hits_before" ] && break; sleep_s 0.1; done
+    sleep_s 0.5
+}
+kill "$sub_pid" 2> /dev/null
+: > "$work/sub.log"
+docker exec "$broker" mosquitto_sub -h 127.0.0.1 -u home-assistant -P "$ha_password" -t 'doorview/front-door-camera/motion' -t 'doorview/front-door-camera/availability' -t 'homeassistant/#' -F '%r|%t|%p' >> "$work/sub.log" 2> /dev/null &
+sub_pid=$!
+: > "$work/snap.log"
+docker exec "$broker" mosquitto_sub -h 127.0.0.1 -u home-assistant -P "$ha_password" -t 'doorview/front-door-camera/snapshot' -F '%r|%l|%x' >> "$work/snap.log" 2> /dev/null &
+snap_sub_pid=$!
+
+make_jpeg 12000
+set_mode normal
+snap_total=0
+set_total 0
+rm -f "$work/mj/imgmode" "$work/mj/reqs"
+start_majestic
+write_config
+echo '-- one daemon with a long cooldown: edges, bytes, retention'
+start_snap_daemon 10
+check 'with snapshot=1 an image entity is discovered' wait_for "$work/sub.log" '|homeassistant/image/front-door-camera/snapshot/config|' 8
+check 'it points at the snapshot topic and declares JPEG' sh -c "grep -F '|homeassistant/image/front-door-camera/snapshot/config|' '$work/sub.log' | grep -q 'image_topic\":\"doorview/front-door-camera/snapshot\".*content_type\":\"image/jpeg'"
+check_not 'the image entity has no state_topic key' sh -c "grep -F '|homeassistant/image/front-door-camera/snapshot/config|' '$work/sub.log' | grep -q state_topic"
+check 'no picture without motion' test "$(snap_count)" = 0
+rise
+check 'a motion edge publishes one picture' wait_snap 1 6
+check 'the published bytes are exactly the JPEG Majestic served (12000 bytes)' test "$(last_snap_hex)" = "$(cat "$work/mj/img.hex")"
+check 'the payload length is reported as 12000' test "$(tail -n 1 "$work/snap.log" | cut -d'|' -f2)" = 12000
+check 'the log records the published picture and its size' grep -q 'snapshot published, 12000 bytes' "$work/daemon-snap.log"
+check 'the request carries the configured path and nothing else' grep -qx 'GET /image.jpg?width=480&height=270&qfactor=40 HTTP/1.0' "$work/mj/reqs"
+docker exec "$broker" mosquitto_sub -h 127.0.0.1 -u home-assistant -P "$ha_password" -t 'doorview/front-door-camera/snapshot' -C 1 -W 3 -F '%r|%l' > "$work/snap-retained.log" 2> /dev/null
+check 'the picture is retained' grep -qx '1|12000' "$work/snap-retained.log"
+# A second, separate edge inside the 10 s cooldown: the hold time (2 s) runs out, the sensor goes OFF, motion starts again.
+sleep_s 4.5
+rise
+sleep_s 2.5
+check 'a second edge inside the cooldown publishes no picture' test "$(snap_count)" = 1
+# The counter keeps rising for longer than the cooldown: that is one long motion, not a new edge.
+for n in $(seq 1 24); do rise; sleep_s 0.5; done
+sleep_s 1
+check 'a rise that outlasts the cooldown is not a new edge and adds no picture' test "$(snap_count)" = 1
+sleep_s 4.5
+rise
+check 'after the cooldown a new edge publishes a second picture' wait_snap 2 6
+kill_daemon
+
+echo '-- a second daemon with a short cooldown: sizes and broken answers'
+start_snap_daemon 1
+make_jpeg 20000
+rise
+check 'a 20000-byte picture needs a three-byte length and arrives intact' wait_snap 3 6
+check 'the 20000-byte payload is bit for bit the served image' test "$(last_snap_hex)" = "$(cat "$work/mj/img.hex")"
+check 'the daemon never reconnected while sending it' test "$(count_of "$work/daemon-snap.log" 'connected')" = 1
+
+for size in 25000 30000; do
+    make_jpeg "$size"
+    sleep_s 4
+    before=$(snap_count)
+    rise
+    sleep_s 3.5
+    check "a $size-byte picture (over the limit) is not published" test "$(snap_count)" = "$before"
+done
+check 'the log names the oversized pictures' test "$(count_of "$work/daemon-snap.log" 'snapshot: ')" -ge 2
+make_jpeg 12000
+
+for broken in notfound html truncated; do
+    printf '%s' "$broken" > "$work/mj/imgmode"
+    sleep_s 4
+    before=$(snap_count)
+    rise
+    sleep_s 3.5
+    check "a $broken answer is not published" test "$(snap_count)" = "$before"
+done
+check 'the log names the non-JPEG answers' test "$(count_of "$work/daemon-snap.log" 'snapshot: not a complete JPEG')" -ge 3
+rm -f "$work/mj/imgmode"
+
+stop_majestic
+sleep_s 4
+before=$(snap_count)
+set_total 999
+sleep_s 4
+check 'with Majestic down nothing is published and nothing crashes' test "$(snap_count)" = "$before"
+check 'the daemon is still alive' kill -0 "$daemon_pid"
+check_not 'the sanitizers report nothing in the snapshot run' grep -qE 'AddressSanitizer|runtime error' "$work/daemon-snap.log"
+kill_daemon
+kill "$snap_sub_pid" 2> /dev/null
+kill "$sub_pid" 2> /dev/null
+start_subscriber
+
 echo '== configuration =='
-check_not 'missing host is rejected' sh -c "printf 'user=x\n' > '$work/bad.conf'; '$work/doorview-mqtt' '$work/bad.conf'"
-check_not 'bad host is rejected' sh -c "printf 'host=not-an-ip\n' > '$work/bad.conf'; '$work/doorview-mqtt' '$work/bad.conf'"
-check_not 'node names with a slash are rejected' sh -c "printf 'host=127.0.0.1\nnode=a/b\n' > '$work/bad.conf'; '$work/doorview-mqtt' '$work/bad.conf'"
-check_not 'a motion port of 0 is rejected' sh -c "printf 'host=127.0.0.1\nmotion_port=0\n' > '$work/bad.conf'; '$work/doorview-mqtt' '$work/bad.conf'"
-check_not 'a motion port above 65535 is rejected' sh -c "printf 'host=127.0.0.1\nmotion_port=70000\n' > '$work/bad.conf'; '$work/doorview-mqtt' '$work/bad.conf'"
-check_not 'a motion hold of 0 is rejected' sh -c "printf 'host=127.0.0.1\nmotion_hold=0\n' > '$work/bad.conf'; '$work/doorview-mqtt' '$work/bad.conf'"
-check_not 'a motion hold above 600 is rejected' sh -c "printf 'host=127.0.0.1\nmotion_hold=601\n' > '$work/bad.conf'; '$work/doorview-mqtt' '$work/bad.conf'"
-check_not 'a missing config file is rejected' "$work/doorview-mqtt" "$work/does-not-exist.conf"
+# The daemon exits with 2 when the configuration is refused and, on a host without a readable kernel log (the test
+# gives it a missing path), with 3 once the configuration has been accepted. Any other non-zero exit would also
+# "fail", so the tests insist on the exact code.
+config_exit() { # <printf format of the config lines>
+    printf "$1" > "$work/cfg.conf"
+    printf 'kmsg=%s/no-such-kmsg\n' "$work" >> "$work/cfg.conf"
+    "$work/doorview-mqtt" "$work/cfg.conf" > /dev/null 2>&1
+    echo $?
+}
+check 'a plain valid configuration is accepted' test "$(config_exit 'host=127.0.0.1\n')" = 3
+check 'missing host is rejected' test "$(config_exit 'user=x\n')" = 2
+check 'bad host is rejected' test "$(config_exit 'host=not-an-ip\n')" = 2
+check 'node names with a slash are rejected' test "$(config_exit 'host=127.0.0.1\nnode=a/b\n')" = 2
+check 'a missing config file is rejected' test "$("$work/doorview-mqtt" "$work/does-not-exist.conf" > /dev/null 2>&1; echo $?)" = 2
+check 'a motion port of 0 is rejected' test "$(config_exit 'host=127.0.0.1\nmotion_port=0\n')" = 2
+check 'a motion port above 65535 is rejected' test "$(config_exit 'host=127.0.0.1\nmotion_port=70000\n')" = 2
+check 'a motion hold of 0 is rejected' test "$(config_exit 'host=127.0.0.1\nmotion_hold=0\n')" = 2
+check 'a motion hold above 600 is rejected' test "$(config_exit 'host=127.0.0.1\nmotion_hold=601\n')" = 2
+check 'a valid motion and snapshot configuration is accepted' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsnapshot_cooldown=60\n')" = 3
+check 'snapshot=1 without motion=1 is rejected' test "$(config_exit 'host=127.0.0.1\nsnapshot=1\n')" = 2
+check 'a snapshot path with a space is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsnapshot_path=/image.jpg HTTP/1.1\n')" = 2
+check 'a snapshot path with a carriage return is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsnapshot_path=/a\rX: y\n')" = 2
+check 'a snapshot path must start with a slash' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsnapshot_path=image.jpg\n')" = 2
+check 'a snapshot path with a query string is accepted' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsnapshot_path=/image.jpg?width=640&height=360\n')" = 3
+check 'a snapshot cooldown of 0 is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsnapshot_cooldown=0\n')" = 2
+check 'a snapshot cooldown above 3600 is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsnapshot_cooldown=3601\n')" = 2
 
 echo "passed=$passed failed=$failed"
 [ "$failed" = 0 ]
