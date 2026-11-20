@@ -11,7 +11,7 @@ Read [Before you start](#before-you-start) completely. **Flashing replaces the f
 | OpenIPC boot | Linux 4.9.37 from flash, Majestic serving HTTP and RTSP | Boot logs; running for days on one unit |
 | 1. Wi-Fi base | Station mode on the Wi-Fi coprocessor, static IPv4, `dv0` interface | Installed on one unit; stream decoded for 300 s at 5.03 fps; the installer for this repository was written afterwards and is tested only on fixture trees |
 | 2. LCD + button | Front button lights the panel with a 30 s live preview; IRQ-driven SDIO receive | Installed on one unit; four of four button tests, cold start with the battery disconnected |
-| 3. MQTT | Battery, external power, button event and uptime for Home Assistant | Run from RAM on one unit with a temporary broker; **not installed persistently** |
+| 3. MQTT | Battery, external power, button event and uptime for Home Assistant | Installed on one unit; connects to a broker with authentication; observed for minutes and two reboots |
 
 One camera was used throughout. Other units, batches or firmware revisions are untested. See [known limits](known-limits.md) before relying on any of it.
 
