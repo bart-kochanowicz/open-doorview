@@ -218,6 +218,9 @@ check 'no temporary files left behind' test -z "$(find "$root/etc" -name '.*' -n
 printf 'gateway=192.0.2.1\n' | cat "$work/good.conf" - > "$work/gateway.conf"
 check 'a configuration with a gateway is installed' configure "$work/gateway.conf" --replace
 check 'the gateway is kept in mqtt.conf' grep -qx 'gateway=192.0.2.1' "$root/etc/doorview/mqtt.conf"
+printf 'motion=1\nmotion_port=8080\nmotion_hold=15\n' | cat "$work/good.conf" - > "$work/motion.conf"
+check 'a configuration with the motion keys is installed' configure "$work/motion.conf" --replace
+check 'the motion keys are kept in mqtt.conf' grep -qx 'motion_hold=15' "$root/etc/doorview/mqtt.conf"
 
 root="$work/root-config-bad"
 build_root "$root"
@@ -247,6 +250,26 @@ command=run-this"
 check_fails 'a password that is too long is rejected' try_bad "host=192.0.2.20
 user=a
 password=$(printf 'x%.0s' $(seq 1 80))"
+check_fails 'motion=2 is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+motion=2"
+check_fails 'a motion_port of 0 is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+motion_port=0"
+check_fails 'a motion_port above 65535 is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+motion_port=70000"
+check_fails 'a non-numeric motion_hold is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+motion_hold=ten"
+check_fails 'a motion_hold of 601 is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+motion_hold=601"
 check_fails 'a gateway that is not an IPv4 address is rejected' try_bad "host=192.0.2.20
 user=a
 password=b
