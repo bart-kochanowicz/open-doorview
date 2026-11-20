@@ -43,6 +43,8 @@ Look at `dmesg | grep 'FIFO empty'`:
 3. Press the button and run `dmesg | grep command=a5`. No `command=a5` lines means the MCU messages are not arriving: that is the Wi-Fi/SDIO stall above (check `FIFO empty`).
 4. `cat /tmp/lcd-vo-test/button-preview-last.log` shows the last preview run.
 
+**The button reaches Home Assistant but the screen no longer lights, after you removed or overwrote files in `/tmp/lcd-vo-test`.** The LCD service runs its program and scripts from that directory (it copies them there at boot). Stop the orphaned listener (`ps | grep button-preview`, a `(deleted)` executable in `ls -l /proc/<pid>/exe`) with `kill <pid>`, then `sh /etc/doorview-lcd/service start`; a reboot also fixes it. Use `/tmp/doorview-upload` for uploads.
+
 **The panel stays dark, but the listener started a preview.** `live-30.sh` refuses to touch the pin mux if a register does not hold the value it expects ("Unexpected pinmux state at ..."): your board or image differs, so do not force it, and read [lcd-and-button.md](lcd-and-button.md#pin-mux). `cat /tmp/lcd-vo-test/live-vo.log` and `head /proc/umap/vo` show whether the VO unit received frames.
 
 **Colours are wrong or the picture is shifted.** The shipped path was verified by eye on one panel only.

@@ -5,7 +5,7 @@ Run these on your computer. The ones that talk to the camera need `DOORVIEW_UART
 | Tool | Purpose |
 |---|---|
 | `uart-cmd.py '<command>'` | runs one shell command on the camera over the UART and prints its output (password on stdin) |
-| `upload-archive.py <archive.tar.gz> <password-file>` | sends an archive as base64 over the UART with echo off, checks its SHA-256 on the camera, and unpacks it into `/tmp/lcd-vo-test` |
+| `upload-archive.py <archive.tar.gz> <password-file>` | sends an archive as base64 over the UART with echo off, checks its SHA-256 on the camera, and unpacks it into `/tmp/doorview-upload` (never `/tmp/lcd-vo-test`: that is the LCD service's runtime directory) |
 | `backup-overlay.py <out.bin>` | reads `/dev/mtdblock5` (the writable overlay) read-only over the UART (password on stdin) |
 | `capture-reboot.py <log>` | logs in, records uptime and the SDIO counters, runs `reboot`, and keeps logging the boot, with the password redacted |
 | `jffs2-files.py list\|cat <image> ...` | reads files out of a JFFS2 image or a flash dump without mounting it (used to read the factory MAC) |

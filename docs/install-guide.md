@@ -105,7 +105,7 @@ python3 tools/make-wifi-config.py --ssid "YourNetwork" --address 192.0.2.10/24 -
 - `--mac` is the value from step 2.
 - SSID and passphrase are each limited to 31 bytes by the drivers; the radio is 2.4 GHz only.
 
-Build the package, pack the configuration and send both. The archives travel as base64 over the UART at roughly 800 bytes per second, so this takes about a minute. They unpack into `/tmp/lcd-vo-test` on the camera (the directory name is historical); the file names of the two archives do not collide:
+Build the package, pack the configuration and send both. The archives travel as base64 over the UART at roughly 800 bytes per second, so this takes about a minute. They unpack into `/tmp/doorview-upload` on the camera; the file names of the two archives do not collide. **Never remove or reuse `/tmp/lcd-vo-test`**: it is the runtime directory of the LCD service (it copies its program and scripts there at boot and runs them from there), and deleting it makes the screen stop lighting until the service is restarted or the camera reboots.
 
 ```sh
 tools/package.sh stage1-wifi
@@ -114,10 +114,10 @@ python3 tools/upload-archive.py build/packages/stage1-wifi.tar.gz "$DOORVIEW_PW"
 python3 tools/upload-archive.py wifi-config.tar.gz "$DOORVIEW_PW"
 ```
 
-Install and configure on the camera (UART shell). Every stage starts from an empty `/tmp/lcd-vo-test`; it lives in RAM, so a reboot between stages clears it, and `rm -rf /tmp/lcd-vo-test` does it by hand:
+Install and configure on the camera (UART shell). Every stage starts from an empty `/tmp/doorview-upload`; it lives in RAM, so a reboot between stages clears it, and `rm -rf /tmp/doorview-upload` does it by hand:
 
 ```sh
-cd /tmp/lcd-vo-test
+cd /tmp/doorview-upload
 sh install.sh .        # prints WIFI_BASE_INSTALLED
 sh configure.sh .      # prints WIFI_CONFIGURED
 rm -f station.hex address mac
@@ -134,7 +134,7 @@ ifconfig dv0              # your static address
 
 From your computer: `ping <address>`, then `curl -sS http://<address>/` (Majestic web UI) and the stream `rtsp://root:<password>@<address>:554/stream=0` (H.265; `ffplay -rtsp_transport tcp <url>` works).
 
-Rollback for this stage: upload the same package again (`/tmp` does not survive a reboot; the rollback compares the installed files with the package's `SHA256SUMS`), then `cd /tmp/lcd-vo-test && sh rollback.sh .`. It removes the hooks and modules and keeps your Wi-Fi configuration unless you add `--purge-config`.
+Rollback for this stage: upload the same package again (`/tmp` does not survive a reboot; the rollback compares the installed files with the package's `SHA256SUMS`), then `cd /tmp/doorview-upload && sh rollback.sh .`. It removes the hooks and modules and keeps your Wi-Fi configuration unless you add `--purge-config`.
 
 ### Optional: lighter video profile
 
@@ -160,7 +160,7 @@ tools/fetch-vendor.sh                  # downloads the vendor VO module and chec
 tools/package.sh stage2-lcd
 python3 tools/upload-archive.py build/packages/stage2-lcd.tar.gz "$DOORVIEW_PW"
 # on the camera:
-cd /tmp/lcd-vo-test && sh install.sh .      # prints LCD_IRQ_INSTALLED
+cd /tmp/doorview-upload && sh install.sh .      # prints LCD_IRQ_INSTALLED
 reboot
 ```
 
@@ -178,7 +178,7 @@ Needs an MQTT 3.1.1 broker the camera can reach on plain TCP with a user and pas
 tools/package.sh stage3-mqtt
 python3 tools/upload-archive.py build/packages/stage3-mqtt.tar.gz "$DOORVIEW_PW"
 # on the camera:
-cd /tmp/lcd-vo-test && sh install.sh .       # prints MQTT_INSTALLED
+cd /tmp/doorview-upload && sh install.sh .       # prints MQTT_INSTALLED
 ```
 
 Create the broker settings locally in a file of mode 600 (`host=`, `port=`, `user=`, `password=`, `gateway=` when the broker is in another subnet, and `motion=1` for the optional motion sensor, which also needs `motionDetect` enabled in `/etc/majestic.yaml`; see [Motion](mqtt-home-assistant.md#motion)), upload it with the same silent upload, run `sh configure.sh <file>` (prints `MQTT_CONFIGURED`), delete the local copy, and reboot. Check `cat /tmp/doorview-mqtt.log` and the new device in Home Assistant.
