@@ -156,6 +156,48 @@ before=$(tree_state "$root")
 check_fails 'a failure after every file is in place fails the install' env PATH="$shim:$PATH" DOORVIEW_ROOT="$root" DOORVIEW_MOUNTS="$mounts_ok" DOORVIEW_FREE_KB=388 sh "$here/install.sh" "$stage"
 check 'failed install rolls back to the exact original tree' test "$before" = "$(tree_state "$root")"
 
+# A manifest that does not cover every installed file must not let an unverified file through.
+empty_stage="$work/stage-empty-manifest"
+build_stage "$empty_stage"
+printf 'x' >> "$empty_stage/vo-live-30"
+: > "$empty_stage/SHA256SUMS"
+root="$work/root-empty-manifest"
+build_root "$root"
+before=$(tree_state "$root")
+check_fails 'refuses an empty SHA256SUMS' env DOORVIEW_ROOT="$root" DOORVIEW_MOUNTS="$mounts_ok" DOORVIEW_FREE_KB=388 sh "$here/install.sh" "$empty_stage"
+check 'refusal changes nothing (empty manifest)' test "$before" = "$(tree_state "$root")"
+short_stage="$work/stage-short-manifest"
+build_stage "$short_stage"
+grep -v ' vo-live-30$' "$short_stage/SHA256SUMS" > "$short_stage/SHA256SUMS.new"
+mv "$short_stage/SHA256SUMS.new" "$short_stage/SHA256SUMS"
+root="$work/root-short-manifest"
+build_root "$root"
+before=$(tree_state "$root")
+check_fails 'refuses a SHA256SUMS that omits a payload file' env DOORVIEW_ROOT="$root" DOORVIEW_MOUNTS="$mounts_ok" DOORVIEW_FREE_KB=388 sh "$here/install.sh" "$short_stage"
+check 'refusal changes nothing (short manifest)' test "$before" = "$(tree_state "$root")"
+
+# If restoring the old S41 also fails, the backup is the only copy left and must be kept.
+real_mktemp=$(command -v mktemp)
+mkshim="$work/mktemp-shim"
+mkdir -p "$mkshim"
+cp "$shim/sync" "$mkshim/sync"
+cat > "$mkshim/mktemp" << EOF
+#!/bin/sh
+count=\$(cat "$work/mktemp-count" 2> /dev/null || echo 0)
+count=\$((count + 1))
+echo "\$count" > "$work/mktemp-count"
+[ "\$count" -gt 4 ] && exit 1
+exec "$real_mktemp" "\$@"
+EOF
+chmod 755 "$mkshim/mktemp"
+rm -f "$work/mktemp-count"
+root="$work/root-restore-fails"
+build_root "$root"
+old_sum=$(digest "$root/etc/init.d/S41doorview-network")
+check_fails 'an install whose restore also fails reports failure' env PATH="$mkshim:$PATH" DOORVIEW_ROOT="$root" DOORVIEW_MOUNTS="$mounts_ok" DOORVIEW_FREE_KB=388 sh "$here/install.sh" "$stage"
+check 'the backup of the old S41 is kept when the restore failed' test "$(digest "$root/etc/doorview/S41doorview-network.previous" 2> /dev/null)" = "$old_sum"
+check 'a failed restore does not write a stray copy into the working directory' test ! -e "./S41doorview-network.previous"
+
 echo '== S41doorview-network =='
 
 bin="$work/bin"

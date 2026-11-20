@@ -54,6 +54,10 @@ done
 while read -r sum name; do
     [ "$(digest "$stage/$name")" = "$sum" ] || exit 1
 done < "$stage/SHA256SUMS"
+# Every file that gets installed must have an entry: an empty or short manifest must not skip verification.
+for name in $stage_files; do
+    awk -v wanted="$name" '$2 == wanted { found = 1 } END { exit !found }' "$stage/SHA256SUMS" || exit 1
+done
 
 # Update only the exact driver that was tested, and never overwrite other state.
 [ "$(digest "$module")" = "$old_module_sha" ] || exit 1
@@ -67,6 +71,7 @@ module_done=no
 daemon_done=no
 hook_done=no
 committed=no
+restore_failed=no
 
 cleanup() {
     result=$?
@@ -76,14 +81,16 @@ cleanup() {
         [ "$daemon_done" = no ] || rm -f "$daemon"
         if [ "$module_done" = yes ]; then
             restore_tmp=$(mktemp "$module_dir/.restore.XXXXXX")
-            if cp "$previous_module" "$restore_tmp" && chmod 600 "$restore_tmp" && mv "$restore_tmp" "$module"; then
+            if [ -n "$restore_tmp" ] && cp "$previous_module" "$restore_tmp" && chmod 600 "$restore_tmp" && mv "$restore_tmp" "$module"; then
                 :
             else
                 rm -f "$restore_tmp"
+                restore_failed=yes
                 echo 'ROLLBACK_FAILED: restore syslink_net_irq.ko from syslink_net_irq.ko.previous' >&2
             fi
         fi
-        [ "$previous_done" = no ] || rm -f "$previous_module"
+        # The backup is the only copy of the old driver if the restore failed: keep it for a manual restore.
+        [ "$previous_done" = no ] || [ "$restore_failed" = yes ] || rm -f "$previous_module"
     fi
     [ -z "$module_tmp" ] || rm -rf "$module_tmp"
     [ -z "$hook_tmp" ] || rm -f "$hook_tmp"

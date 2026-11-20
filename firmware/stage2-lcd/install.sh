@@ -57,6 +57,10 @@ done
 while read -r sum name; do
     [ "$(digest "$stage/$name")" = "$sum" ] || exit 1
 done < "$stage/SHA256SUMS"
+# Every file that gets installed must have an entry: an empty or short manifest must not skip verification.
+for name in $stage_files; do
+    awk -v wanted="$name" '$2 == wanted { found = 1 } END { exit !found }' "$stage/SHA256SUMS" || exit 1
+done
 
 # Only update the exact Wi-Fi startup that was tested, and never overwrite state.
 [ "$(digest "$network_hook")" = "$old_network_sha" ] || exit 1
@@ -74,6 +78,7 @@ irq_done=no
 network_done=no
 lcd_hook_done=no
 committed=no
+restore_failed=no
 
 cleanup() {
     result=$?
@@ -82,15 +87,17 @@ cleanup() {
         [ "$lcd_hook_done" = no ] || rm -f "$lcd_hook"
         if [ "$network_done" = yes ]; then
             restore_tmp=$(mktemp "$init_dir/.doorview.XXXXXX")
-            if cp "$previous_hook" "$restore_tmp" && chmod 755 "$restore_tmp" && mv "$restore_tmp" "$network_hook"; then
+            if [ -n "$restore_tmp" ] && cp "$previous_hook" "$restore_tmp" && chmod 755 "$restore_tmp" && mv "$restore_tmp" "$network_hook"; then
                 :
             else
                 rm -f "$restore_tmp"
+                restore_failed=yes
                 echo 'ROLLBACK_FAILED: restore S41doorview-network from S41doorview-network.previous' >&2
             fi
         fi
         [ "$irq_done" = no ] || rm -f "$irq_module"
-        [ "$previous_done" = no ] || rm -f "$previous_hook"
+        # The backup is the only copy of the old S41 if the restore failed: keep it for a manual restore.
+        [ "$previous_done" = no ] || [ "$restore_failed" = yes ] || rm -f "$previous_hook"
         [ "$lcd_done" = no ] || rm -rf "$lcd_dir"
     fi
     [ -z "$lcd_tmp" ] || rm -rf "$lcd_tmp"

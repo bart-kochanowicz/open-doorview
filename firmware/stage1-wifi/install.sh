@@ -55,7 +55,7 @@ while read -r sum name; do
     [ "$(digest "$stage/$name")" = "$sum" ] || exit 1
 done < "$stage/SHA256SUMS"
 for name in $stage_files; do
-    grep -q " $name\$" "$stage/SHA256SUMS" || exit 1
+    awk -v wanted="$name" '$2 == wanted { found = 1 } END { exit !found }' "$stage/SHA256SUMS" || exit 1
 done
 
 # Never overwrite anything that already exists.
