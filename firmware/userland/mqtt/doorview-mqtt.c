@@ -884,6 +884,9 @@ static void process_receive(u32 now)
         if (type == 2) { /* CONNACK */
             if (length >= 2 && receive_buffer[offset + header + 1] == 0) {
                 on_connected(now);
+                /* A failed first publish has already reset the buffer; do not touch it again. */
+                if (link == LINK_DOWN)
+                    return;
             } else {
                 link_fail("broker refused the connection");
                 return;

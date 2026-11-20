@@ -256,6 +256,37 @@ python3 -c 'import time; time.sleep(1)'
 check 'the camera user can publish under its own prefix' grep -qF 'doorview/front-door-camera/probe|allowed' "$work/sub.log"
 check_not 'the camera user cannot publish elsewhere (ACL)' grep -qF 'other/topic' "$work/sub.log"
 
+echo '== a broker that drops the connection right after CONNACK =='
+# The broker accepts, answers CONNECT with CONNACK, and closes. The daemon's first publishes then hit a closed
+# socket. It must neither be killed by SIGPIPE nor parse its reset receive buffer (an ASan/UBSan build catches that).
+cc -fsanitize=address,undefined -fno-sanitize-recover=undefined -g -O1 -o "$work/doorview-mqtt-asan" "$here/doorview-mqtt.c" "$here/sys-host.c"
+cat > "$work/dropping-broker.py" << 'PYEOF'
+import socket, sys
+server = socket.socket()
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(('127.0.0.1', int(sys.argv[1])))
+server.listen(5)
+while True:
+    connection, _ = server.accept()
+    connection.recv(4096)
+    connection.sendall(b'\x20\x02\x00\x00')
+    connection.close()
+    open(sys.argv[2], 'a').write('x\n')
+PYEOF
+: > "$work/drops.log"
+python3 "$work/dropping-broker.py" 18884 "$work/drops.log" &
+dropping_pid=$!
+python3 -c 'import time; time.sleep(1)'
+sed "s/^port=.*/port=18884/" "$work/mqtt.conf" > "$work/mqtt-drop.conf"
+"$work/doorview-mqtt-asan" "$work/mqtt-drop.conf" > "$work/daemon-drop.log" 2>&1 &
+drop_daemon_pid=$!
+python3 -c 'import time; time.sleep(9)'
+check 'the daemon survives a broker that closes after CONNACK' kill -0 "$drop_daemon_pid"
+check 'it keeps reconnecting' test "$(wc -l < "$work/drops.log" | tr -d ' ')" -ge 2
+check_not 'the sanitizers report nothing' grep -qE 'AddressSanitizer|runtime error' "$work/daemon-drop.log"
+kill -9 "$drop_daemon_pid" "$dropping_pid" 2> /dev/null
+wait "$drop_daemon_pid" "$dropping_pid" 2> /dev/null
+
 echo '== configuration =='
 check_not 'missing host is rejected' sh -c "printf 'user=x\n' > '$work/bad.conf'; '$work/doorview-mqtt' '$work/bad.conf'"
 check_not 'bad host is rejected' sh -c "printf 'host=not-an-ip\n' > '$work/bad.conf'; '$work/doorview-mqtt' '$work/bad.conf'"

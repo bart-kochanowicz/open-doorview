@@ -7,6 +7,7 @@
 #define NR_open 5
 #define NR_close 6
 #define NR_poll 168
+#define NR_rt_sigaction 174
 #define NR_clock_gettime 263
 #define NR_socket 281
 #define NR_connect 283
@@ -164,10 +165,25 @@ void sys_exit(int code)
     }
 }
 
+/* A write to a socket the broker has already closed must return an error, not kill the daemon. */
+static void ignore_sigpipe(void)
+{
+    /* The ARM kernel_sigaction: handler (SIG_IGN is 1), flags, restorer, then an 8-byte signal mask. */
+    unsigned long action[5] = {1, 0, 0, 0, 0};
+    register long r0 __asm__("r0") = 13; /* SIGPIPE */
+    register long r1 __asm__("r1") = (long)action;
+    register long r2 __asm__("r2") = 0;
+    register long r3 __asm__("r3") = 8;
+    register long r7 __asm__("r7") = NR_rt_sigaction;
+
+    __asm__ volatile("svc 0" : "+r"(r0) : "r"(r1), "r"(r2), "r"(r3), "r"(r7) : "memory", "cc");
+}
+
 int app_main(const char *config_path);
 
 void start_c(int argc, char **argv)
 {
+    ignore_sigpipe();
     sys_exit(app_main(argc > 1 ? argv[1] : "/etc/doorview/mqtt.conf"));
 }
 

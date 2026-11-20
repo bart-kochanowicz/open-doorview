@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <sys/socket.h>
 #include <time.h>
@@ -116,5 +117,6 @@ void sys_exit(int code)
 
 int main(int argc, char **argv)
 {
+    signal(SIGPIPE, SIG_IGN); /* a closed socket must return an error, as on the camera */
     return app_main(argc > 1 ? argv[1] : "/etc/doorview/mqtt.conf");
 }
