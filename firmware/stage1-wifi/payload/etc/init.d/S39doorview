@@ -1,0 +1,24 @@
+#!/bin/sh
+
+MODULE_DIR=${DOORVIEW_MODULE_DIR:-/etc/doorview}
+SDIO_DEVICE=/sys/bus/sdio/devices/mmc1:0001:1
+
+start() {
+    n=0
+    while [ "$n" -lt 10 ]; do
+        insmod "$MODULE_DIR/syslink_poll.ko" bit_us=12 || return 1
+        sleep 1
+        if [ -e "$SDIO_DEVICE" ]; then
+            insmod "$MODULE_DIR/syslink_bg.ko"
+            return $?
+        fi
+        rmmod syslink_poll || return 1
+        n=$((n + 1))
+    done
+    return 1
+}
+
+case "$1" in
+    start) start ;;
+    *) echo "Usage: $0 start" >&2; exit 2 ;;
+esac
