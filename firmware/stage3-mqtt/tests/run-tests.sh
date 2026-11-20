@@ -221,6 +221,9 @@ check 'the gateway is kept in mqtt.conf' grep -qx 'gateway=192.0.2.1' "$root/etc
 printf 'motion=1\nmotion_port=8080\nmotion_hold=15\n' | cat "$work/good.conf" - > "$work/motion.conf"
 check 'a configuration with the motion keys is installed' configure "$work/motion.conf" --replace
 check 'the motion keys are kept in mqtt.conf' grep -qx 'motion_hold=15' "$root/etc/doorview/mqtt.conf"
+printf 'motion=1\nsnapshot=1\nsnapshot_path=/image.jpg?width=480&height=270&qfactor=40\nsnapshot_cooldown=60\n' | cat "$work/good.conf" - > "$work/snapshot.conf"
+check 'a configuration with the snapshot keys is installed' configure "$work/snapshot.conf" --replace
+check 'the snapshot keys are kept in mqtt.conf' grep -qx 'snapshot_cooldown=60' "$root/etc/doorview/mqtt.conf"
 
 root="$work/root-config-bad"
 build_root "$root"
@@ -270,6 +273,39 @@ check_fails 'a motion_hold of 601 is rejected' try_bad "host=192.0.2.20
 user=a
 password=b
 motion_hold=601"
+check_fails 'snapshot=2 is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+motion=1
+snapshot=2"
+check_fails 'snapshot=1 without motion=1 is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+snapshot=1"
+check_fails 'a snapshot path with a space is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+motion=1
+snapshot=1
+snapshot_path=/image.jpg HTTP/1.1"
+check_fails 'a snapshot path without a leading slash is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+motion=1
+snapshot=1
+snapshot_path=image.jpg"
+check_fails 'a snapshot_cooldown of 0 is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+motion=1
+snapshot=1
+snapshot_cooldown=0"
+check_fails 'a snapshot_cooldown of 3601 is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+motion=1
+snapshot=1
+snapshot_cooldown=3601"
 check_fails 'a gateway that is not an IPv4 address is rejected' try_bad "host=192.0.2.20
 user=a
 password=b

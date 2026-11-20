@@ -2,7 +2,8 @@
  * (Home Assistant discovery). It follows the kernel log written by the syslink driver:
  *   doorview_power: command=a2 ... payload=SS UU CC CC   MCU PowerInfo: status, usb, capacity
  *   doorview_control: command=a5 length=8                button
- * With motion=1 it also polls Majestic's motion counter on the loopback interface (see fetch_motion_total).
+ * With motion=1 it also polls Majestic's motion counter on the loopback interface (see fetch_motion_total), and with
+ * snapshot=1 it publishes a JPEG from Majestic when motion starts, so Home Assistant never has to reach the camera.
  * Platform access goes through sys.h, so the same logic runs on the camera and on a test host. */
 #include "sys.h"
 
@@ -19,6 +20,11 @@
 #define MOTION_POLL_MS 1000u
 #define MOTION_IO_MS 300u
 #define METRICS_MAX 4096
+#define SNAPSHOT_MAX 24576 /* largest JPEG published */
+#define SNAPSHOT_RESPONSE_MAX (SNAPSHOT_MAX + 1024) /* HTTP headers included */
+#define SNAPSHOT_HEAD 256 /* room in front of the response for the MQTT header */
+#define SNAPSHOT_IO_MS 2000u
+#define SNAPSHOT_PENDING_MS 10000u
 
 struct config {
     u32 address;
@@ -38,6 +44,9 @@ struct config {
     int motion;
     int motion_port;
     int motion_hold;
+    int snapshot;
+    int snapshot_cooldown;
+    char snapshot_path[128];
 };
 
 static struct config cfg;
@@ -182,6 +191,24 @@ static int valid_identifier(const char *text, int allow_space)
     return 1;
 }
 
+/* A request path that cannot smuggle a second header line into the GET: no spaces or control characters. */
+static int valid_path(const char *text)
+{
+    int index;
+
+    if (text[0] != '/')
+        return 0;
+    for (index = 0; text[index]; index++) {
+        char c = text[index];
+
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+            c == '/' || c == '.' || c == '_' || c == '-' || c == '?' || c == '&' || c == '=' || c == '%')
+            continue;
+        return 0;
+    }
+    return 1;
+}
+
 static int parse_address(const char *text, u32 *address)
 {
     u32 result = 0;
@@ -256,6 +283,8 @@ static int load_config(const char *path)
     cfg.keepalive = 60;
     cfg.motion_port = 80;
     cfg.motion_hold = 10;
+    cfg.snapshot_cooldown = 30;
+    str_copy(cfg.snapshot_path, sizeof(cfg.snapshot_path), "/image.jpg?width=480&height=270&qfactor=40");
     str_copy(cfg.node, sizeof(cfg.node), "front-door-camera");
     str_copy(cfg.name, sizeof(cfg.name), "Front door camera");
     str_copy(cfg.discovery, sizeof(cfg.discovery), "homeassistant");
@@ -351,8 +380,21 @@ static int load_config(const char *path)
             if (!parse_number(value, &number) || number < 1 || number > 600)
                 return -11;
             cfg.motion_hold = number;
+        } else if (str_eq(line, "snapshot")) {
+            cfg.snapshot = str_eq(value, "1");
+        } else if (str_eq(line, "snapshot_path")) {
+            if (!valid_path(value))
+                return -12;
+            if (!store(cfg.snapshot_path, sizeof(cfg.snapshot_path), value))
+                return -9;
+        } else if (str_eq(line, "snapshot_cooldown")) {
+            if (!parse_number(value, &number) || number < 1 || number > 3600)
+                return -13;
+            cfg.snapshot_cooldown = number;
         }
     }
+    if (cfg.snapshot && !cfg.motion)
+        return -14; /* the snapshot is taken when motion starts */
     return have_host ? 0 : -8;
 }
 
@@ -527,8 +569,14 @@ static u32 motion_total;
 static u32 motion_until_ms;
 static u32 last_motion_poll_ms;
 static char metrics[METRICS_MAX];
+static u8 snapshot_buffer[SNAPSHOT_HEAD + SNAPSHOT_RESPONSE_MAX];
+static int snapshot_pending;
+static int have_snapshot;
+static u32 snapshot_deadline_ms;
+static u32 last_snapshot_ms;
 
-static int publish_discovery_entry(const char *component, const char *object, const char *label, const char *extra)
+static int publish_discovery_entry(const char *component, const char *object, const char *label, const char *state_key,
+                                   const char *extra)
 {
     char config_topic[128];
     struct out topic_out = { config_topic, 0, (int)sizeof(config_topic) - 1, 0 };
@@ -552,7 +600,9 @@ static int publish_discovery_entry(const char *component, const char *object, co
     put_text(&o, cfg.node);
     put_char(&o, '_');
     put_text(&o, object);
-    put_text(&o, "\",\"state_topic\":\"");
+    put_text(&o, "\",\"");
+    put_text(&o, state_key);
+    put_text(&o, "\":\"");
     put_text(&o, node_prefix);
     put_char(&o, '/');
     put_text(&o, object);
@@ -575,18 +625,20 @@ static int publish_discovery_entry(const char *component, const char *object, co
 
 static int publish_discovery(void)
 {
-    return publish_discovery_entry("sensor", "battery", "Battery",
+    return publish_discovery_entry("sensor", "battery", "Battery", "state_topic",
                                    ",\"device_class\":\"battery\",\"unit_of_measurement\":\"%\",\"state_class\":\"measurement\"") ||
-           publish_discovery_entry("binary_sensor", "external_power", "External power",
+           publish_discovery_entry("binary_sensor", "external_power", "External power", "state_topic",
                                    ",\"device_class\":\"plug\",\"payload_on\":\"ON\",\"payload_off\":\"OFF\"") ||
-           publish_discovery_entry("sensor", "power_status", "Power status",
+           publish_discovery_entry("sensor", "power_status", "Power status", "state_topic",
                                    ",\"entity_category\":\"diagnostic\",\"state_class\":\"measurement\"") ||
-           publish_discovery_entry("sensor", "uptime", "Uptime",
+           publish_discovery_entry("sensor", "uptime", "Uptime", "state_topic",
                                    ",\"device_class\":\"duration\",\"unit_of_measurement\":\"s\",\"entity_category\":\"diagnostic\",\"state_class\":\"total_increasing\"") ||
-           publish_discovery_entry("event", "button", "Button",
+           publish_discovery_entry("event", "button", "Button", "state_topic",
                                    ",\"device_class\":\"button\",\"event_types\":[\"press\"]") ||
-           (cfg.motion && publish_discovery_entry("binary_sensor", "motion", "Motion",
-                                                  ",\"device_class\":\"motion\",\"payload_on\":\"ON\",\"payload_off\":\"OFF\""));
+           (cfg.motion && publish_discovery_entry("binary_sensor", "motion", "Motion", "state_topic",
+                                                  ",\"device_class\":\"motion\",\"payload_on\":\"ON\",\"payload_off\":\"OFF\"")) ||
+           (cfg.snapshot && publish_discovery_entry("image", "snapshot", "Snapshot", "image_topic",
+                                                    ",\"content_type\":\"image/jpeg\""));
 }
 
 static int read_uptime_seconds(void)
@@ -694,29 +746,40 @@ static int parse_motion_total(const char *text, int length, u32 *total)
     return 0;
 }
 
-static int fetch_motion_total(u32 *total)
+/* One HTTP/1.0 GET to Majestic on the loopback interface, bounded by io_ms. Reads the whole answer (headers
+ * included) into buffer, or stops early once done() says it has what it needs. Returns the number of bytes read, or
+ * -1 when the connection or the request fails. A full buffer is the caller's to interpret. */
+static int http_get(const char *path, u8 *buffer, int capacity, u32 io_ms, int (*done)(const u8 *, int))
 {
-    static const char request[] = "GET /metrics/motion HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    char request[256];
+    struct out o = { request, 0, (int)sizeof(request), 0 };
     u32 started = sys_now_ms();
     int length = 0;
     int result = -1;
     int status;
-    int fd = sys_tcp_start(0x7f000001u, (u16)cfg.motion_port);
+    int fd;
 
+    put_text(&o, "GET ");
+    put_text(&o, path);
+    put_text(&o, " HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+    if (o.overflow)
+        return -1;
+    fd = sys_tcp_start(0x7f000001u, (u16)cfg.motion_port);
     if (fd < 0)
         return -1;
     while ((status = sys_tcp_status(fd)) == 1) {
-        if (sys_now_ms() - started > MOTION_IO_MS)
-            goto done;
+        if (sys_now_ms() - started > io_ms)
+            goto finish;
         sys_wait(-1, fd, 1, 20);
     }
-    if (status != 0 || sys_write(fd, request, (int)sizeof(request) - 1) != (int)sizeof(request) - 1)
-        goto done;
-    while (length < METRICS_MAX - 1) {
-        int count = sys_read(fd, metrics + length, METRICS_MAX - 1 - length);
+    if (status != 0 || sys_write(fd, request, o.length) != o.length)
+        goto finish;
+    result = 0;
+    while (length < capacity) {
+        int count = sys_read(fd, buffer + length, capacity - length);
 
         if (count == SYS_EAGAIN) {
-            if (sys_now_ms() - started > MOTION_IO_MS)
+            if (sys_now_ms() - started > io_ms)
                 break;
             sys_wait(-1, fd, 0, 20);
             continue;
@@ -724,14 +787,27 @@ static int fetch_motion_total(u32 *total)
         if (count <= 0)
             break;
         length += count;
-        if (!parse_motion_total(metrics, length, total)) {
-            result = 0;
+        if (done && done(buffer, length))
             break;
-        }
     }
-done:
+    result = length;
+finish:
     sys_close(fd);
     return result;
+}
+
+static int metrics_done(const u8 *text, int length)
+{
+    u32 ignored;
+
+    return !parse_motion_total((const char *)text, length, &ignored);
+}
+
+static int fetch_motion_total(u32 *total)
+{
+    int length = http_get("/metrics/motion", (u8 *)metrics, METRICS_MAX - 1, MOTION_IO_MS, metrics_done);
+
+    return length > 0 ? parse_motion_total(metrics, length, total) : -1;
 }
 
 /* Turns the counter into a binary sensor: ON when it rises, OFF motion_hold seconds after the last rise. A counter
@@ -768,6 +844,104 @@ static void poll_motion(u32 now)
     update_motion(now);
     if (motion_state != previous)
         dirty_motion = 1;
+    if (cfg.snapshot && previous == 0 && motion_state == 1) {
+        snapshot_pending = 1;
+        snapshot_deadline_ms = sys_now_ms() + SNAPSHOT_PENDING_MS;
+    }
+}
+
+/* ---- snapshot ---- */
+
+/* The JPEG is read into snapshot_buffer after SNAPSHOT_HEAD spare bytes, and the MQTT header is written backwards
+ * from the start of the image, so a 12 KB picture is never copied. Returns the first byte of the packet. */
+static u8 *write_publish_header(u8 *payload, int payload_length, const char *topic_name, int retain, int *packet_length)
+{
+    int topic_length = str_len(topic_name);
+    int remaining = 2 + topic_length + payload_length;
+    u8 digits[3];
+    int count = 0;
+    int index;
+    u8 *at = payload;
+
+    at -= topic_length;
+    for (index = 0; index < topic_length; index++)
+        at[index] = (u8)topic_name[index];
+    at -= 2;
+    at[0] = (u8)(topic_length >> 8);
+    at[1] = (u8)(topic_length & 0xff);
+    do {
+        u8 digit = (u8)(remaining & 0x7f);
+
+        remaining >>= 7;
+        if (remaining)
+            digit |= 0x80;
+        digits[count++] = digit;
+    } while (remaining && count < 3);
+    for (index = count - 1; index >= 0; index--)
+        *--at = digits[index];
+    *--at = (u8)(0x30 | (retain ? 1 : 0));
+    *packet_length = (int)(payload + payload_length - at);
+    return at;
+}
+
+/* Finds the picture in an HTTP answer: status 200, and a JPEG that starts with SOI and ends with EOI, so a
+ * half-read or error page is never published. Returns the offset of the body or -1. */
+static int find_jpeg(const u8 *data, int length, int *body_length)
+{
+    const char *text = (const char *)data;
+    const char *end = find_text(text, length, "\r\n\r\n");
+    int offset;
+    int size;
+
+    if (!end || length < 12 || !find_text(text, 16, "HTTP/1.") || !find_text(text, length < 32 ? length : 32, " 200 "))
+        return -1;
+    offset = (int)(end - text) + 4;
+    size = length - offset;
+    if (size < 4 || data[offset] != 0xff || data[offset + 1] != 0xd8 || data[length - 2] != 0xff || data[length - 1] != 0xd9)
+        return -1;
+    *body_length = size;
+    return offset;
+}
+
+/* Returns 0 when the picture was published or skipped, -1 when the MQTT socket failed. */
+static int take_snapshot(void)
+{
+    char name[96];
+    u8 *response = snapshot_buffer + SNAPSHOT_HEAD;
+    int length = http_get(cfg.snapshot_path, response, SNAPSHOT_RESPONSE_MAX, SNAPSHOT_IO_MS, 0);
+    int body_length = 0;
+    int offset;
+    int packet_length;
+    u8 *start;
+
+    if (length < 0) {
+        logmsg("snapshot: Majestic does not answer");
+        return 0;
+    }
+    if (length >= SNAPSHOT_RESPONSE_MAX) {
+        logmsg("snapshot: picture too large");
+        return 0;
+    }
+    offset = find_jpeg(response, length, &body_length);
+    if (offset < 0 || body_length > SNAPSHOT_MAX) {
+        logmsg("snapshot: not a complete JPEG");
+        return 0;
+    }
+    topic(name, sizeof(name), "snapshot");
+    start = write_publish_header(response + offset, body_length, name, 1, &packet_length);
+    if (send_all(start, packet_length))
+        return -1;
+    {
+        char text[48];
+        struct out o = { text, 0, (int)sizeof(text) - 1, 0 };
+
+        put_text(&o, "snapshot published, ");
+        put_decimal(&o, body_length);
+        put_text(&o, " bytes");
+        text[o.length] = 0;
+        logmsg(text);
+    }
+    return 0;
 }
 
 /* ---- kernel log parsing ---- */
@@ -1135,6 +1309,20 @@ int app_main(const char *config_path)
             if (publish_states(0) || send_events()) {
                 link_fail("publish failed");
                 break;
+            }
+            if (snapshot_pending) {
+                int expired = (int)(now - snapshot_deadline_ms) >= 0;
+                int cooling = have_snapshot && now - last_snapshot_ms < (u32)cfg.snapshot_cooldown * 1000u;
+
+                snapshot_pending = 0;
+                if (!expired && !cooling) {
+                    last_snapshot_ms = now;
+                    have_snapshot = 1;
+                    if (take_snapshot()) {
+                        link_fail("publish failed");
+                        break;
+                    }
+                }
             }
             if (now - last_uptime_ms >= UPTIME_PERIOD_MS) {
                 last_uptime_ms = now;

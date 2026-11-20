@@ -61,7 +61,7 @@ Private material lives **outside** the repository (flash dumps, overlay backups,
 
 ## Next work (in a sensible order)
 
-1. Observe stage 3 and the motion sensor over days: Home Assistant values (battery, USB, button, motion), broker outages, reconnects, false alarms (tune `motionDetect` sensitivity and region of interest). Stages 1 and 2 set no default route; stage 3 adds it from `gateway=` in `mqtt.conf`. Next for the goal "notify when someone is at the door": a dedicated Majestic account and a firewall rule so Home Assistant can fetch `/image.jpg` for a notification.
+1. Observe stage 3 and the motion sensor over days: Home Assistant values (battery, USB, button, motion), broker outages, reconnects, false alarms (tune `motionDetect` sensitivity and region of interest). Stages 1 and 2 set no default route; stage 3 adds it from `gateway=` in `mqtt.conf`. Next for the goal "notify when someone is at the door": the optional `snapshot=1` publishes a picture to the broker on the Motion edge (Home Assistant never reaches the camera). Do NOT create a second web account or open the camera's port 80 to Home Assistant: the web interface has no roles and every account is a root-equivalent administrator.
 2. Wi-Fi health: understand the dead-data-path state, then decide on a reconnect or watchdog that is proven to recover (the optional `wifi_watchdog` is unproven and off).
 3. Long-run stability of the interrupt-driven driver (only about 100 minutes observed) and the cause of the early-boot resets (two before every successful software reboot so far).
 4. Signal strength and access-point info (needs the RSSI query; warn first).
