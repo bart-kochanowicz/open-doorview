@@ -14,6 +14,7 @@ sub_pid=
 cleanup() {
     [ -z "$daemon_pid" ] || kill -9 "$daemon_pid" 2> /dev/null
     [ -z "$sub_pid" ] || kill "$sub_pid" 2> /dev/null
+    [ -z "${majestic_pid:-}" ] || kill -9 "$majestic_pid" 2> /dev/null
     docker rm -f "$broker" > /dev/null 2>&1
     rm -rf "$work"
 }
@@ -180,6 +181,7 @@ for line in open(sys.argv[1]):
 sys.exit(0 if seen == 5 else 1)
 PY
 check 'discovery payloads are valid JSON with a shared device block' test $? -eq 0
+check_not 'no motion entity or state unless motion=1 is configured' grep -qE 'front-door-camera/motion' "$work/sub.log"
 
 snapshot
 check 'a late subscriber gets availability online as retained' grep -qF '1|doorview/front-door-camera/availability|online' "$work/retained.log"
@@ -289,10 +291,130 @@ check_not 'the sanitizers report nothing' grep -qE 'AddressSanitizer|runtime err
 kill -9 "$drop_daemon_pid" "$dropping_pid" 2> /dev/null
 wait "$drop_daemon_pid" "$dropping_pid" 2> /dev/null
 
+echo '== motion =='
+# A stand-in for Majestic's /metrics/motion. Files in $work/mj steer it: total (the counter), mode (normal, auth,
+# partial = last line without a newline, nocounter, hold = keeps the connection open after answering).
+mkdir -p "$work/mj"
+cat > "$work/fake-majestic.py" << 'PYEOF'
+import os, socket, sys, threading, time
+port, state = int(sys.argv[1]), sys.argv[2]
+def read(name, default):
+    try:
+        return open(os.path.join(state, name)).read().strip() or default
+    except OSError:
+        return default
+HELP = ('# HELP md_onsets_blanked_total Changes the camera made to its own picture -- a lamp, the IR-cut filter, colour '
+        'and grey, a pan/tilt turn, a zoom or a focus pass -- that held back a motion start the detector reported\n'
+        '# TYPE md_onsets_blanked_total counter\nmd_onsets_blanked_total 0\n'
+        '# HELP md_rects_recv_total Number of rectangles returned by HW MD algorithm.\n'
+        '# TYPE md_rects_recv_total counter\nmd_rects_recv_total %s\n'
+        '# HELP md_rects_acc_total Number of rectangles fit into ROI.\n# TYPE md_rects_acc_total counter\n')
+def serve(conn):
+    try:
+        conn.recv(4096)
+        mode, total = read('mode', 'normal'), read('total', '0')
+        open(os.path.join(state, 'hits'), 'a').write('x\n')
+        if mode == 'auth':
+            conn.sendall(b'HTTP/1.0 401 Unauthorized\r\nWWW-Authenticate: Basic realm="x"\r\nContent-Length: 0\r\n\r\n')
+            return
+        body = HELP % total
+        if mode == 'partial':
+            body += 'md_rects_acc_total %s' % total
+        elif mode != 'nocounter':
+            body += 'md_rects_acc_total %s\n' % total
+        conn.sendall(b'HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\n' + body.encode())
+        if mode == 'hold':
+            time.sleep(3)
+    finally:
+        conn.close()
+server = socket.socket()
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(('127.0.0.1', port))
+server.listen(5)
+while True:
+    connection, _ = server.accept()
+    threading.Thread(target=serve, args=(connection,), daemon=True).start()
+PYEOF
+motion_port=18890
+set_total() { printf '%s' "$1" > "$work/mj/total"; }
+set_mode() { printf '%s' "$1" > "$work/mj/mode"; }
+start_majestic() { python3 "$work/fake-majestic.py" "$motion_port" "$work/mj" & majestic_pid=$!; python3 -c 'import time; time.sleep(0.5)'; }
+stop_majestic() { [ -z "${majestic_pid:-}" ] || { kill -9 "$majestic_pid" 2> /dev/null; wait "$majestic_pid" 2> /dev/null; majestic_pid=; }; }
+motion_count() { count_of "$work/sub.log" "doorview/front-door-camera/motion|$1"; }
+sleep_s() { python3 -c "import time; time.sleep($1)"; }
+
+set_total 0
+set_mode normal
+: > "$work/mj/hits"
+start_majestic
+write_config
+{ cat "$work/mqtt.conf"; printf 'motion=1\nmotion_port=%s\nmotion_hold=2\n' "$motion_port"; } > "$work/mqtt-motion.conf"
+: > "$work/sub.log"
+"$work/doorview-mqtt-asan" "$work/mqtt-motion.conf" > "$work/daemon-motion.log" 2>&1 &
+daemon_pid=$!
+check 'with motion=1 the motion entity is discovered' wait_for "$work/sub.log" '|homeassistant/binary_sensor/front-door-camera/motion/config|' 8
+check 'the motion entity is a motion sensor with ON/OFF payloads' sh -c "grep -F '|homeassistant/binary_sensor/front-door-camera/motion/config|' '$work/sub.log' | grep -q 'device_class\":\"motion\",\"payload_on\":\"ON\",\"payload_off\":\"OFF'"
+check 'the first reading gives a retained OFF (a baseline, not motion)' wait_for "$work/sub.log" '|doorview/front-door-camera/motion|OFF' 5
+check 'the counter is polled' test "$(wc -l < "$work/mj/hits" | tr -d ' ')" -ge 1
+set_total 5
+check 'a rising counter publishes ON' wait_for "$work/sub.log" '|doorview/front-door-camera/motion|ON' 5
+check 'it goes OFF again after the hold time without a rise' test "$(for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50; do [ "$(motion_count OFF)" -ge 2 ] && echo ok && break; sleep_s 0.1; done)" = ok
+on_before=$(motion_count ON)
+off_before=$(motion_count OFF)
+for n in 6 7 8 9 10 11; do set_total "$n"; sleep_s 0.5; done
+check 'ON stays on while the counter keeps rising (no OFF in between)' test "$(motion_count OFF)" = "$off_before"
+check 'a second burst is a second ON' test "$(motion_count ON)" = "$((on_before + 1))"
+check 'it goes OFF after that burst too' wait_for "$work/sub.log" 'doorview/front-door-camera/motion|OFF' 6
+sleep_s 3
+on_before=$(motion_count ON)
+set_total 0
+sleep_s 2.5
+check 'a counter that goes down (Majestic restarted) is a new baseline, not motion' test "$(motion_count ON)" = "$on_before"
+check 'the daemon is alive' kill -0 "$daemon_pid"
+
+set_mode auth
+set_total 50
+sleep_s 2.5
+check 'a 401 page from Majestic is not motion' test "$(motion_count ON)" = "$on_before"
+set_mode normal
+check 'the counter is picked up again when Majestic answers again' wait_for "$work/sub.log" '|doorview/front-door-camera/motion|ON' 5
+sleep_s 4
+on_before=$(motion_count ON)
+set_mode partial
+set_total 99999
+sleep_s 2.5
+check 'a last line without its newline is not trusted' test "$(motion_count ON)" = "$on_before"
+set_mode nocounter
+sleep_s 2.5
+check 'an answer without the counter (motion detection off) changes nothing' test "$(motion_count ON)" = "$on_before"
+check 'the daemon is still alive' kill -0 "$daemon_pid"
+
+set_mode hold
+set_total 60
+check 'a server that keeps the connection open is read without waiting for it to close' test "$(for i in $(seq 1 30); do [ "$(motion_count ON)" -gt "$on_before" ] && echo ok && break; sleep_s 0.1; done)" = ok
+set_mode normal
+set_total 70
+sleep_s 1.5
+stop_majestic
+off_before=$(motion_count OFF)
+check 'when Majestic disappears while ON the sensor still goes OFF after the hold time' test "$(for i in $(seq 1 80); do [ "$(motion_count OFF)" -gt "$off_before" ] && echo ok && break; sleep_s 0.1; done)" = ok
+check 'the daemon survives Majestic being down' kill -0 "$daemon_pid"
+snapshot
+check 'a late subscriber gets the motion state as retained' grep -qE '^1\|doorview/front-door-camera/motion\|(ON|OFF)$' "$work/retained.log"
+check 'the motion run never reconnected (a busy publisher still pings)' test "$(count_of "$work/daemon-motion.log" 'connected')" = 1
+check_not 'the broker was never taken for dead while the daemon was publishing' grep -qF 'stopped answering' "$work/daemon-motion.log"
+check_not 'the sanitizers report nothing in the motion run' grep -qE 'AddressSanitizer|runtime error' "$work/daemon-motion.log"
+kill_daemon
+wait_for "$work/sub.log" '|doorview/front-door-camera/availability|offline' 12
+
 echo '== configuration =='
 check_not 'missing host is rejected' sh -c "printf 'user=x\n' > '$work/bad.conf'; '$work/doorview-mqtt' '$work/bad.conf'"
 check_not 'bad host is rejected' sh -c "printf 'host=not-an-ip\n' > '$work/bad.conf'; '$work/doorview-mqtt' '$work/bad.conf'"
 check_not 'node names with a slash are rejected' sh -c "printf 'host=127.0.0.1\nnode=a/b\n' > '$work/bad.conf'; '$work/doorview-mqtt' '$work/bad.conf'"
+check_not 'a motion port of 0 is rejected' sh -c "printf 'host=127.0.0.1\nmotion_port=0\n' > '$work/bad.conf'; '$work/doorview-mqtt' '$work/bad.conf'"
+check_not 'a motion port above 65535 is rejected' sh -c "printf 'host=127.0.0.1\nmotion_port=70000\n' > '$work/bad.conf'; '$work/doorview-mqtt' '$work/bad.conf'"
+check_not 'a motion hold of 0 is rejected' sh -c "printf 'host=127.0.0.1\nmotion_hold=0\n' > '$work/bad.conf'; '$work/doorview-mqtt' '$work/bad.conf'"
+check_not 'a motion hold above 600 is rejected' sh -c "printf 'host=127.0.0.1\nmotion_hold=601\n' > '$work/bad.conf'; '$work/doorview-mqtt' '$work/bad.conf'"
 check_not 'a missing config file is rejected' "$work/doorview-mqtt" "$work/does-not-exist.conf"
 
 echo "passed=$passed failed=$failed"
