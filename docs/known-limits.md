@@ -28,7 +28,7 @@ Read this before trusting any part of the project.
 - DHCP, automatic Wi-Fi reconnect (an optional watchdog exists, off, and its recovery step is unproven), WPA3, open networks, 5 GHz, SSIDs or passphrases over 31 bytes.
 - Signal strength and access-point information (the factory command exists; it was never sent because commands to the MCU are risky).
 - TLS for MQTT.
-- Audio, the speaker and microphone, the PIR, the battery fuel gauge beyond the MCU's value. The IR-cut filter and IR LEDs work through Majestic's `nightMode` with GPIO 8 (see [night vision](night-vision.md)); motion detection in the dark is still not reliable (sensor noise; a GC2053 noise profile and `slowShutter: medium` cut it several times, but the Motion sensor is probably still on in a dark room, see the measurements there) and the night snapshot path was not confirmed end to end.
+- Audio, the speaker and microphone, the PIR, the battery fuel gauge beyond the MCU's value. The IR-cut filter and IR LEDs work through Majestic's `nightMode` with GPIO 8 (see [night vision](night-vision.md)); motion detection in the dark works in night mode (IR LEDs on; rate threshold `motion_min_rate=20`) but the camera does not switch to night mode by itself in a dim room, where the noise is above the threshold; see the measurements there and the night snapshot path was not confirmed end to end.
 - Person detection. The SoC has one core, about 27 MB of RAM for Linux and no neural accelerator, so classification would have to run elsewhere with the camera only triggering and sending a frame.
 - Over-the-air update, and anything that survives a re-flash.
 

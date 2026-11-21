@@ -42,7 +42,15 @@ Measured on the unit (observed), nobody moving in a nearly dark room, night mode
 - A hand waved in front of the lens for 12 s with the final settings gave about 37 rectangles per second against about 13 per second without it: roughly **3 times the noise** (1.6 times before the profile).
 - Daylight: a picture taken afterwards in a lit room has natural colours and good detail, no visible softening compared with the older daylight pictures (a visual comparison, at a different `qfactor`).
 
-Still **not** good enough: at about 13 rectangles per second of noise the counter still rises all the time in that dark room, so a Motion sensor that turns on at any rise would stay on. A threshold on the rate (rectangles per second above the noise) in the daemon would use the 3 times margin; it was not written.
+The daemon now has a threshold on the rate (`motion_min_rate`, `motion_window`, see the [MQTT guide](mqtt-home-assistant.md#motion)) and a delay for the picture (`snapshot_delay_ms`). The unit runs `motion_min_rate=20`, `motion_window=3`, `snapshot_delay_ms=1500` (2026-11-21), from `mqtt.conf`.
+
+Measured with it on the unit (observed), a dark room, in the HA recorder:
+
+- **Night mode with the IR LEDs on:** the counter gained about 0 to 4 rectangles per 3 s, and the Motion sensor stayed off for more than three minutes (it had been on, and went off about 10 s after night mode was forced). Two waves of a hand, 95 s apart, each turned Motion on; the pictures reached Home Assistant about 8 to 9 s after the edge (the 1.5 s delay plus about 5 s to send a 190 to 210 KB night picture).
+- **Day mode in the same dark room (no IR, exposure up to about 485 ms with `slowShutter: medium`):** the counter gained about 30 per second, above the threshold, and the sensor was on for several minutes. This is the case that is left, because of the next point.
+
+**The camera did not switch to night mode by itself in that dim room** (gain 38,000 to 45,000, not at its maximum; earlier, with `slowShutter: disabled` and a maximum gain, it also needed the lens covered completely). Majestic decides from the sensor's own exposure state, so in a room that is dark but not black it stays in day mode and the IR LEDs stay off. Whether a real doorway at night is dark enough is not known. `nightMode.switchBy` offers `clock`, `sun` and the `pictureNear…` variants (`nightFrom`, `dayFrom`, latitude and longitude); none was tried.
+
 
 ## Not solved
 
@@ -60,11 +68,11 @@ A hand waved in front of the lens for 15 s at sensitivity 0 gave about 60 per se
 
 What is left, none tried yet (the noise profile and `slowShutter` above are done):
 
-- **A rate threshold in the daemon** (new setting, rectangles per second above which Motion turns on), using the 3 times margin measured above.
+- **Switch to night mode by the clock or the sun** (`nightMode.switchBy`) so that the IR LEDs are on at night whatever the picture looks like; not tried.
 - **Use another trigger at night.** The front button already reaches Home Assistant as an event; taking a picture on a button press would not depend on the noise.
 - **PIR (read from the factory firmware; not seen on the unit).** The factory firmware has a PIR path through the MCU: the message table in `p2pcam.bin` (file offset `0x537ee8`, entries of name, handler and id) lists `HI_SYSLINK_MSG_M2S_PIR_ALARM` with **id 4**, in a group of alarm messages (low battery 3, Wi-Fi 5, external power 6 and 7, key event 8), while the ring key is `0xA5` (the button we observe) and `0xA3` is `POWERINFO`; there are also PIR sensitivity get and set calls (`PDT_TEST_MCU_GetPIRSen`, `SetPIRSen`), a PIR wake-up reason and `support_pir = 1` in `hwcfg.ini`. There is no PIR pin in the GPIO table. Our driver logs every application message (`doorview_control: command=..`), and during hours of use, including hand waves in front of the lens, only `0xA2` and `0xA5` appeared, so the MCU does not send PIR alarms by itself. Making it do so probably needs a command to the MCU (enable and sensitivity), which is exactly what the documentation warns about: one such command silenced the UART and needed a power-button press. The message ids above also disagree by one with the documented `0xA2` PowerInfo (the table says `0xA3`), so the table may not be the wire numbering; the wire id of the PIR alarm is therefore **not established**.
 - A region of interest (`motionDetect.roi`, `XxYxWxH`, empty means the whole frame) restricts where motion counts, so it can remove an unwanted zone but not noise inside the zone; it was not tried; a doorway at night, lit by the IR LEDs, may also be far less noisy than this dark room.
-- The snapshot is taken at the instant of the edge. After the lens was uncovered it caught a nearly black frame while the exposure adapted, and at a door it may catch the person only partly in view. A delay of one to two seconds is a change in the daemon.
+- The snapshot used to be taken at the instant of the edge: after the lens was uncovered it caught a nearly black frame while the exposure adapted, and at a door it may catch the person only partly in view. `snapshot_delay_ms=1500` is set now; whether 1.5 s is the right delay at a real door was not tried.
 
 ### Pictures
 

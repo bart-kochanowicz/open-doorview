@@ -449,8 +449,8 @@ wait_snap() { # <count> <seconds>
     return 1
 }
 rise() { snap_total=$((snap_total + 5)); set_total "$snap_total"; }
-start_snap_daemon() { # <cooldown>; waits for the baseline reading, so the next rise is a real rise
-    { cat "$work/mqtt.conf"; printf 'motion=1\nmotion_port=%s\nmotion_hold=2\nsnapshot=1\nsnapshot_cooldown=%s\n' "$motion_port" "$1"; } > "$work/mqtt-snap.conf"
+start_snap_daemon() { # <cooldown> [extra config lines, separated by \n]; waits for the baseline reading, so the next rise is a real rise
+    { cat "$work/mqtt.conf"; printf 'motion=1\nmotion_port=%s\nmotion_hold=2\nsnapshot=1\nsnapshot_cooldown=%s\n%b\n' "$motion_port" "$1" "${2:-}"; } > "$work/mqtt-snap.conf"
     hits_before=$(wc -l < "$work/mj/hits" | tr -d ' ')
     "$work/doorview-mqtt-asan" "$work/mqtt-snap.conf" > "$work/daemon-snap.log" 2>&1 &
     daemon_pid=$!
@@ -551,6 +551,87 @@ check 'with Majestic down nothing is published and nothing crashes' test "$(snap
 check 'the daemon is still alive' kill -0 "$daemon_pid"
 check_not 'the sanitizers report nothing in the snapshot run' grep -qE 'AddressSanitizer|runtime error' "$work/daemon-snap.log"
 kill_daemon
+
+echo '-- motion_min_rate: noise stays below the threshold, movement rises above it'
+drive() { # <rectangles per second> <seconds>: raises the fake counter steadily, four times a second
+    python3 - "$work/mj/total" "$1" "$2" << 'PY'
+import os, sys, time
+path, rate, seconds = sys.argv[1], float(sys.argv[2]), float(sys.argv[3])
+end = time.time() + seconds
+while time.time() < end:
+    try:
+        total = int(open(path).read() or 0)
+    except Exception:
+        total = 0
+    open(path + '.tmp', 'w').write(str(total + int(round(rate * 0.25))))
+    os.replace(path + '.tmp', path)
+    time.sleep(0.25)
+PY
+}
+now_s() { python3 -c 'import time; print(time.time())'; }
+motion_on() { motion_count ON; }
+start_majestic
+set_mode normal
+rm -f "$work/mj/imgmode"
+set_total 0
+: > "$work/sub.log"
+: > "$work/snap.log"
+start_snap_daemon 1 'motion_min_rate=20\nmotion_window=3'
+sleep_s 4.5
+check 'a quiet counter leaves Motion off and publishes no picture' test "$(motion_on)" = 0 -a "$(snap_count)" = 0
+drive 8 9
+check 'noise of 8 per second, below the threshold of 20, keeps Motion off' test "$(motion_on)" = 0
+check 'and publishes no picture' test "$(snap_count)" = 0
+drive 40 1.5
+check 'movement needs a few seconds of history: no ON after 1.5 s at 40 per second' test "$(motion_on)" = 0
+drive 40 7
+check 'movement at 40 per second, above the threshold, turns Motion on' test "$(motion_on)" -ge 1
+check 'and publishes one picture' wait_snap 1 6
+sleep_s 4.5
+before_on=$(motion_on)
+drive 30 1
+sleep_s 5
+check 'a burst of 30 in one second (about 9 per second over the window) does not turn Motion on' test "$(motion_on)" = "$before_on"
+drive 150 1
+sleep_s 1
+check 'a burst of 150 in one second (about 40 per second over the window) does' test "$(motion_on)" -gt "$before_on"
+sleep_s 4.5
+# A counter that goes down means Majestic restarted. The history must be forgotten, not compared with the new value.
+before_on=$(motion_on)
+set_total 200000
+sleep_s 1.5
+sleep_s 4.5
+before_on=$(motion_on)
+set_total 10
+drive 8 8
+check 'a counter that goes down is a new baseline, not movement' test "$(motion_on)" = "$before_on"
+check_not 'the sanitizers report nothing with the rate threshold' grep -qE 'AddressSanitizer|runtime error' "$work/daemon-snap.log"
+kill_daemon
+
+echo '-- snapshot_delay_ms: the picture is taken after the delay, not at the edge'
+set_total 0
+start_snap_daemon 1 'snapshot_delay_ms=2500'
+before=$(snap_count)
+t0=$(now_s)
+set_total 5
+wait_snap $((before + 1)) 10
+t1=$(now_s)
+elapsed=$(python3 -c "print($t1 - $t0)")
+check 'with a delay of 2500 ms the picture arrives only after about that time' python3 -c "import sys; sys.exit(0 if $elapsed >= 2.4 else 1)"
+check 'and not much later (polling and sending take about a second)' python3 -c "import sys; sys.exit(0 if $elapsed < 5.5 else 1)"
+check 'only one picture for one edge' test "$(snap_count)" = "$((before + 1))"
+kill_daemon
+set_total 0
+start_snap_daemon 1
+before=$(snap_count)
+t0=$(now_s)
+set_total 5
+wait_snap $((before + 1)) 10
+t1=$(now_s)
+elapsed=$(python3 -c "print($t1 - $t0)")
+check 'without a delay the picture arrives within the polling interval' python3 -c "import sys; sys.exit(0 if $elapsed < 2.2 else 1)"
+kill_daemon
+stop_majestic
 kill "$snap_sub_pid" 2> /dev/null
 kill "$sub_pid" 2> /dev/null
 start_subscriber
@@ -581,6 +662,15 @@ check 'a snapshot path with a carriage return is rejected' test "$(config_exit '
 check 'a snapshot path must start with a slash' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsnapshot_path=image.jpg\n')" = 2
 check 'a snapshot path with a query string is accepted' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsnapshot_path=/image.jpg?width=640&height=360\n')" = 3
 check 'a snapshot cooldown of 0 is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsnapshot_cooldown=0\n')" = 2
+check 'a motion_min_rate of 0 and of 10000 are accepted' test "$(config_exit 'host=127.0.0.1\nmotion_min_rate=0\n')$(config_exit 'host=127.0.0.1\nmotion_min_rate=10000\n')" = 33
+check 'a motion_min_rate above 10000 is rejected' test "$(config_exit 'host=127.0.0.1\nmotion_min_rate=10001\n')" = 2
+check 'a negative motion_min_rate is rejected' test "$(config_exit 'host=127.0.0.1\nmotion_min_rate=-1\n')" = 2
+check 'a motion_window of 1 and of 10 are accepted' test "$(config_exit 'host=127.0.0.1\nmotion_window=1\n')$(config_exit 'host=127.0.0.1\nmotion_window=10\n')" = 33
+check 'a motion_window of 0 is rejected' test "$(config_exit 'host=127.0.0.1\nmotion_window=0\n')" = 2
+check 'a motion_window of 11 is rejected' test "$(config_exit 'host=127.0.0.1\nmotion_window=11\n')" = 2
+check 'a snapshot_delay_ms of 0 and of 5000 are accepted' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsnapshot_delay_ms=0\n')$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsnapshot_delay_ms=5000\n')" = 33
+check 'a snapshot_delay_ms above 5000 is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsnapshot_delay_ms=5001\n')" = 2
+check 'a negative snapshot_delay_ms is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsnapshot_delay_ms=-5\n')" = 2
 check 'a snapshot cooldown above 3600 is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsnapshot_cooldown=3601\n')" = 2
 
 echo "passed=$passed failed=$failed"
