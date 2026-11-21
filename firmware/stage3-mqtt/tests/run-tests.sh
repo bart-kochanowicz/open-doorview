@@ -224,6 +224,9 @@ check 'the motion keys are kept in mqtt.conf' grep -qx 'motion_hold=15' "$root/e
 printf 'motion=1\nsnapshot=1\nsnapshot_path=/image.jpg?width=480&height=270&qfactor=40\nsnapshot_cooldown=60\n' | cat "$work/good.conf" - > "$work/snapshot.conf"
 check 'a configuration with the snapshot keys is installed' configure "$work/snapshot.conf" --replace
 check 'the snapshot keys are kept in mqtt.conf' grep -qx 'snapshot_cooldown=60' "$root/etc/doorview/mqtt.conf"
+printf 'motion=1\nmotion_min_rate=20\nmotion_window=3\nsnapshot=1\nsnapshot_delay_ms=1500\n' | cat "$work/good.conf" - > "$work/rate.conf"
+check 'a configuration with the rate and delay keys is installed' configure "$work/rate.conf" --replace
+check 'the rate and delay keys are kept in mqtt.conf' grep -qx 'snapshot_delay_ms=1500' "$root/etc/doorview/mqtt.conf"
 
 root="$work/root-config-bad"
 build_root "$root"
@@ -294,6 +297,38 @@ password=b
 motion=1
 snapshot=1
 snapshot_path=image.jpg"
+check_fails 'a motion_min_rate above 10000 is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+motion=1
+motion_min_rate=10001"
+check_fails 'a negative motion_min_rate is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+motion=1
+motion_min_rate=-1"
+check_fails 'a motion_window of 0 is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+motion=1
+motion_window=0"
+check_fails 'a motion_window of 11 is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+motion=1
+motion_window=11"
+check_fails 'a snapshot_delay_ms above 5000 is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+motion=1
+snapshot=1
+snapshot_delay_ms=5001"
+check_fails 'a non-numeric snapshot_delay_ms is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+motion=1
+snapshot=1
+snapshot_delay_ms=soon"
 check_fails 'a snapshot_cooldown of 0 is rejected' try_bad "host=192.0.2.20
 user=a
 password=b

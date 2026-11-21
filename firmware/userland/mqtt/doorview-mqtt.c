@@ -44,8 +44,11 @@ struct config {
     int motion;
     int motion_port;
     int motion_hold;
+    int motion_min_rate;
+    int motion_window;
     int snapshot;
     int snapshot_cooldown;
+    int snapshot_delay_ms;
     char snapshot_path[128];
 };
 
@@ -283,6 +286,7 @@ static int load_config(const char *path)
     cfg.keepalive = 60;
     cfg.motion_port = 80;
     cfg.motion_hold = 10;
+    cfg.motion_window = 3;
     cfg.snapshot_cooldown = 30;
     str_copy(cfg.snapshot_path, sizeof(cfg.snapshot_path), "/image.jpg?qfactor=60");
     str_copy(cfg.node, sizeof(cfg.node), "front-door-camera");
@@ -380,6 +384,18 @@ static int load_config(const char *path)
             if (!parse_number(value, &number) || number < 1 || number > 600)
                 return -11;
             cfg.motion_hold = number;
+        } else if (str_eq(line, "motion_min_rate")) {
+            if (!parse_number(value, &number) || number < 0 || number > 10000)
+                return -15;
+            cfg.motion_min_rate = number;
+        } else if (str_eq(line, "motion_window")) {
+            if (!parse_number(value, &number) || number < 1 || number > 10)
+                return -16;
+            cfg.motion_window = number;
+        } else if (str_eq(line, "snapshot_delay_ms")) {
+            if (!parse_number(value, &number) || number < 0 || number > 5000)
+                return -17;
+            cfg.snapshot_delay_ms = number;
         } else if (str_eq(line, "snapshot")) {
             cfg.snapshot = str_eq(value, "1");
         } else if (str_eq(line, "snapshot_path")) {
@@ -570,11 +586,21 @@ static int have_motion_total;
 static u32 motion_total;
 static u32 motion_until_ms;
 static u32 last_motion_poll_ms;
+
+/* The last readings of the counter, newest last, to measure how fast it rises over motion_window seconds. */
+#define MOTION_SAMPLES 16
+static struct {
+    u32 at_ms;
+    u32 total;
+} motion_samples[MOTION_SAMPLES];
+static int motion_sample_head; /* next slot to write */
+static int motion_sample_count;
 static char metrics[METRICS_MAX];
 static u8 snapshot_buffer[SNAPSHOT_HEAD + SNAPSHOT_RESPONSE_MAX];
 static int snapshot_pending;
 static int have_snapshot;
 static u32 snapshot_deadline_ms;
+static u32 snapshot_due_ms; /* not before this: the picture is taken snapshot_delay_ms after the motion edge */
 static u32 last_snapshot_ms;
 
 static int publish_discovery_entry(const char *component, const char *object, const char *label, const char *state_key,
@@ -812,11 +838,48 @@ static int fetch_motion_total(u32 *total)
     return length > 0 ? parse_motion_total(metrics, length, total) : -1;
 }
 
-/* Turns the counter into a binary sensor: ON when it rises, OFF motion_hold seconds after the last rise. A counter
- * that goes down means Majestic restarted: take it as the new baseline instead of as motion. */
+static void note_motion_sample(u32 now, u32 total)
+{
+    motion_samples[motion_sample_head].at_ms = now;
+    motion_samples[motion_sample_head].total = total;
+    motion_sample_head = (motion_sample_head + 1) % MOTION_SAMPLES;
+    if (motion_sample_count < MOTION_SAMPLES)
+        motion_sample_count++;
+}
+
+/* Whether the counter rose by at least motion_min_rate rectangles per second over the newest stretch that is at least
+ * motion_window seconds long (the span ends at the sample just noted). False while there is not that much history yet.
+ * No division: the freestanding ARM build has no divide helper, so the rate is compared as delta * 1000 against
+ * min_rate * age; the clamps keep both products below 2^32. */
+static int motion_fast_enough(u32 now, u32 total)
+{
+    int back;
+
+    for (back = 2; back <= motion_sample_count; back++) {
+        int slot = (motion_sample_head - back + 2 * MOTION_SAMPLES) % MOTION_SAMPLES;
+        u32 age = now - motion_samples[slot].at_ms;
+
+        if (age >= (u32)cfg.motion_window * 1000u) {
+            u32 delta = total - motion_samples[slot].total;
+
+            if (delta > 1000000u)
+                delta = 1000000u;
+            if (age > 100000u)
+                age = 100000u;
+            return delta * 1000u >= (u32)cfg.motion_min_rate * age;
+        }
+    }
+    return 0;
+}
+
+/* Turns the counter into a binary sensor: ON when it rises, OFF motion_hold seconds after the last rise. With
+ * motion_min_rate it must rise by at least that many rectangles per second over motion_window seconds, which keeps the
+ * detector's own noise in the dark from holding the sensor on. A counter that goes down means Majestic restarted: take
+ * it as the new baseline (and forget the history) instead of as motion. */
 static void update_motion(u32 now)
 {
     u32 total;
+    int rise;
 
     if (motion_state == 1 && (int)(now - motion_until_ms) >= 0)
         motion_state = 0;
@@ -828,7 +891,14 @@ static void update_motion(u32 now)
     now = sys_now_ms();
     if (motion_state < 0)
         motion_state = 0;
-    if (have_motion_total && total > motion_total) {
+    if (have_motion_total && total < motion_total)
+        motion_sample_count = 0;
+    note_motion_sample(now, total);
+    if (cfg.motion_min_rate > 0)
+        rise = have_motion_total && motion_fast_enough(now, total);
+    else
+        rise = have_motion_total && total > motion_total;
+    if (rise) {
         motion_until_ms = now + (u32)cfg.motion_hold * 1000u;
         motion_state = 1;
     }
@@ -847,8 +917,11 @@ static void poll_motion(u32 now)
     if (motion_state != previous)
         dirty_motion = 1;
     if (cfg.snapshot && previous == 0 && motion_state == 1) {
+        u32 edge = sys_now_ms();
+
         snapshot_pending = 1;
-        snapshot_deadline_ms = sys_now_ms() + SNAPSHOT_PENDING_MS;
+        snapshot_due_ms = edge + (u32)cfg.snapshot_delay_ms;
+        snapshot_deadline_ms = edge + SNAPSHOT_PENDING_MS;
     }
 }
 
@@ -1316,7 +1389,7 @@ int app_main(const char *config_path)
                 link_fail("publish failed");
                 break;
             }
-            if (snapshot_pending) {
+            if (snapshot_pending && (int)(now - snapshot_due_ms) >= 0) {
                 int expired = (int)(now - snapshot_deadline_ms) >= 0;
                 int cooling = have_snapshot && now - last_snapshot_ms < (u32)cfg.snapshot_cooldown * 1000u;
 
@@ -1354,6 +1427,11 @@ int app_main(const char *config_path)
             break;
         }
         watchdog(now);
+        if (snapshot_pending) {
+            int until = (int)(snapshot_due_ms - now);
+
+            wait_ms = until < 1 ? 1 : (until < wait_ms ? until : wait_ms);
+        }
         if (link == LINK_DOWN) {
             int until = (int)(next_attempt_ms - now);
 
