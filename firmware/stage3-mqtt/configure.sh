@@ -29,6 +29,10 @@ snapshot=
 snapshot_path=
 snapshot_cooldown=
 snapshot_delay_ms=
+live=
+live_seconds=
+live_interval_ms=
+live_path=
 while IFS= read -r line || [ -n "$line" ]; do
     line=${line%"$(printf '\r')"}
     case "$line" in
@@ -47,6 +51,10 @@ while IFS= read -r line || [ -n "$line" ]; do
         snapshot_path=*) snapshot_path=${line#snapshot_path=} ;;
         snapshot_cooldown=*) snapshot_cooldown=${line#snapshot_cooldown=} ;;
         snapshot_delay_ms=*) snapshot_delay_ms=${line#snapshot_delay_ms=} ;;
+        live=*) live=${line#live=} ;;
+        live_seconds=*) live_seconds=${line#live_seconds=} ;;
+        live_interval_ms=*) live_interval_ms=${line#live_interval_ms=} ;;
+        live_path=*) live_path=${line#live_path=} ;;
         node=*|name=*|discovery=*|keepalive=*|wifi_watchdog=*) ;;
         *) echo "unknown key in configuration" >&2; exit 1 ;;
     esac
@@ -65,6 +73,10 @@ case "$snapshot" in ''|0|1) ;; *) echo 'snapshot must be 0 or 1' >&2; exit 1 ;; 
 [ -z "$snapshot_path" ] || printf '%s\n' "$snapshot_path" | grep -Eq '^/[A-Za-z0-9/._?&=%-]{0,120}$' || { echo 'bad snapshot_path' >&2; exit 1; }
 [ -z "$snapshot_cooldown" ] || { printf '%s\n' "$snapshot_cooldown" | grep -Eq '^[0-9]{1,4}$' && [ "$snapshot_cooldown" -ge 1 ] && [ "$snapshot_cooldown" -le 3600 ]; } || { echo 'bad snapshot_cooldown' >&2; exit 1; }
 [ -z "$snapshot_delay_ms" ] || { printf '%s\n' "$snapshot_delay_ms" | grep -Eq '^[0-9]{1,4}$' && [ "$snapshot_delay_ms" -le 5000 ]; } || { echo 'bad snapshot_delay_ms' >&2; exit 1; }
+case "$live" in ''|0|1) ;; *) echo 'live must be 0 or 1' >&2; exit 1 ;; esac
+[ -z "$live_seconds" ] || { printf '%s\n' "$live_seconds" | grep -Eq '^[0-9]{1,3}$' && [ "$live_seconds" -ge 1 ] && [ "$live_seconds" -le 300 ]; } || { echo 'bad live_seconds' >&2; exit 1; }
+[ -z "$live_interval_ms" ] || { printf '%s\n' "$live_interval_ms" | grep -Eq '^[0-9]{1,4}$' && [ "$live_interval_ms" -ge 100 ] && [ "$live_interval_ms" -le 5000 ]; } || { echo 'bad live_interval_ms' >&2; exit 1; }
+[ -z "$live_path" ] || printf '%s\n' "$live_path" | grep -Eq '^/[A-Za-z0-9/._?&=%-]{0,120}$' || { echo 'bad live_path' >&2; exit 1; }
 [ -n "$user" ] && [ -n "$password" ] || { echo 'user and password are required' >&2; exit 1; }
 [ "${#password}" -lt 64 ] && [ "${#user}" -lt 64 ] || { echo 'user or password too long' >&2; exit 1; }
 
