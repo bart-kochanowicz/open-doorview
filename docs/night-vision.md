@@ -39,9 +39,18 @@ A hand waved in front of the lens for 15 s at sensitivity 0 gave about 60 per se
 
 Likely causes and ways forward, none tried yet:
 
-- **The ISP noise profile is for another sensor.** `/etc/sensors/iq/default.ini` is a link to `imx307.ini` (other profiles: `imx335`, `ov2735`, `sc2232`), while the factory firmware names the sensor GC2053 and ships its own day and night tuning (`image.ini`, `Night_level*.xml`). Less noise at night would help the motion detector and the picture size alike. A GC2053 profile would have to be built from the factory tuning.
-- **Use another trigger at night.** The front button already reaches Home Assistant as an event; taking a picture on a button press would not depend on the noise. The factory configuration says `support_pir=1`, but no PIR was ever found or read.
-- A region of interest (`motionDetect.roi`) restricts where noise counts but was not tried; a doorway at night, lit by the IR LEDs, may also be far less noisy than this dark room.
+- **The ISP noise profile is for another sensor, and fixing it helps a lot (measured, RAM only).** `/etc/sensors/iq/default.ini` is a link to `imx307.ini`; Majestic uses "the profile named after the sensor, or `default.ini` when there is none", and there is no `gc2053.ini`. The factory firmware's `Day_level0.xml` (partition `fs-c`) has an `NR` page for the GC2053 (`sensor.cfg` and `hwcfg.ini` say `gc2053`) with `Auto.FineStr`, `Auto.CoringWeight` and `Auto.CoarseStr`, 16 values per ISO step: the same fields as `FineStr`, `CoringWgt` and `CoarseStr_0..3` in Majestic's profile. The factory values are much stronger at high gain (`CoringWeight` 60 against 0, `FineStr` about 80 against 40 to 50). A copy of `imx307.ini` with these twelve lines replaced, in `[static_nr]` and in `[ir_static_nr]` (the section used at night), was bind-mounted over `imx307.ini` for the test and removed again. Same scene, night mode forced, both runs back to back:
+
+  | | imx307 profile (now) | factory NR arrays |
+  |---|---|---|
+  | motion rectangles per 10 s, nobody moving | 636 | 211 |
+  | picture at `qfactor=45` | 276 KB | 234 KB |
+  | sensor gain during the run | 22,528 | 27,036 |
+
+  Not tested: the effect on daylight sharpness (the factory FineStr is higher also at low ISO), the 3DNR tables (the factory has per-ISO files for the GC2053 in `fs-c`; the profile has them disabled in the static section), the motion detector with a real movement, and installing the file. A persistent install would be `/etc/sensors/iq/gc2053.ini` (about 21 KB compressed; 260 KB free in the overlay), picked up by name; removing the file undoes it.
+- **Use another trigger at night.** The front button already reaches Home Assistant as an event; taking a picture on a button press would not depend on the noise.
+- **PIR (read from the factory firmware; not seen on the unit).** The factory firmware has a PIR path through the MCU: the message table in `p2pcam.bin` (file offset `0x537ee8`, entries of name, handler and id) lists `HI_SYSLINK_MSG_M2S_PIR_ALARM` with **id 4**, in a group of alarm messages (low battery 3, Wi-Fi 5, external power 6 and 7, key event 8), while the ring key is `0xA5` (the button we observe) and `0xA3` is `POWERINFO`; there are also PIR sensitivity get and set calls (`PDT_TEST_MCU_GetPIRSen`, `SetPIRSen`), a PIR wake-up reason and `support_pir = 1` in `hwcfg.ini`. There is no PIR pin in the GPIO table. Our driver logs every application message (`doorview_control: command=..`), and during hours of use, including hand waves in front of the lens, only `0xA2` and `0xA5` appeared, so the MCU does not send PIR alarms by itself. Making it do so probably needs a command to the MCU (enable and sensitivity), which is exactly what the documentation warns about: one such command silenced the UART and needed a power-button press. The message ids above also disagree by one with the documented `0xA2` PowerInfo (the table says `0xA3`), so the table may not be the wire numbering; the wire id of the PIR alarm is therefore **not established**.
+- A region of interest (`motionDetect.roi`, `XxYxWxH`, empty means the whole frame) restricts where motion counts, so it can remove an unwanted zone but not noise inside the zone; it was not tried; a doorway at night, lit by the IR LEDs, may also be far less noisy than this dark room.
 - The snapshot is taken at the instant of the edge. After the lens was uncovered it caught a nearly black frame while the exposure adapted, and at a door it may catch the person only partly in view. A delay of one to two seconds is a change in the daemon.
 
 ### Pictures
@@ -51,4 +60,5 @@ Night pictures are noisier and larger (215 to 326 KB at `qfactor=60` and 1920 ×
 ### Other
 
 - The night notification was exercised once (the notification automation ran at 16:50 and 16:58, with a 215 KB and a nearly black 39 KB picture); a clean test, with the lens uncovered and more than a minute of waiting before the wave, was not done.
+- `isp.slowShutter` is `disabled` here (to keep 5 fps for video). Majestic says a longer exposure in the dark gives a brighter, less noisy picture at a lower frame rate; since the 1080p video is not usable anyway, this is another lever for night noise, not tried.
 - The IR LEDs stay on for the whole night; power draw and heat were not measured.
