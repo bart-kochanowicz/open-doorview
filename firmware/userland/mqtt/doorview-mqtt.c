@@ -1061,6 +1061,8 @@ static int take_snapshot(void)
 static u32 live_deadline_ms;
 static u32 live_next_ms;
 static u32 live_frames;
+static u32 live_bytes;
+static u32 live_started_ms;
 static int live_warned; /* a picture that Majestic could not give was already logged in this view */
 static char live_set_topic[96]; /* doorview/<node>/live/set */
 
@@ -1069,6 +1071,8 @@ static void live_start(u32 now)
     if (!live_active) {
         live_active = 1;
         live_frames = 0;
+        live_bytes = 0;
+        live_started_ms = now;
         live_warned = 0;
         live_next_ms = now;
         dirty_live = 1;
@@ -1079,7 +1083,7 @@ static void live_start(u32 now)
 
 static void live_stop(void)
 {
-    char text[48];
+    char text[96];
     struct out o = { text, 0, (int)sizeof(text) - 1, 0 };
 
     if (!live_active)
@@ -1088,7 +1092,11 @@ static void live_stop(void)
     dirty_live = 1;
     put_text(&o, "live view ended, ");
     put_decimal(&o, (int)live_frames);
-    put_text(&o, " pictures");
+    put_text(&o, " pictures, ");
+    put_decimal(&o, (int)live_bytes);
+    put_text(&o, " bytes in ");
+    put_decimal(&o, (int)(sys_now_ms() - live_started_ms));
+    put_text(&o, " ms");
     text[o.length] = 0;
     logmsg(text);
 }
@@ -1118,6 +1126,7 @@ static int take_live_frame(void)
     if (send_all(start, packet_length))
         return -1;
     live_frames++;
+    live_bytes += (u32)body_length;
     return 0;
 }
 
