@@ -69,6 +69,8 @@ allow_anonymous false
 password_file /mosquitto/config/passwd
 acl_file /mosquitto/config/acl
 persistence false
+# As in production: a larger packet makes the broker drop the connection.
+max_packet_size 524288
 EOF
 cat > "$work/broker/acl" << 'EOF'
 user home-assistant
@@ -480,8 +482,8 @@ rise
 check 'a motion edge publishes one picture' wait_snap 1 6
 check 'the published bytes are exactly the JPEG Majestic served (12000 bytes)' test "$(last_snap_hex)" = "$(cat "$work/mj/img.hex")"
 check 'the payload length is reported as 12000' test "$(tail -n 1 "$work/snap.log" | cut -d'|' -f2)" = 12000
-check 'the log records the published picture and its size' grep -q 'snapshot published, 12000 bytes' "$work/daemon-snap.log"
-check 'the request carries the configured path and nothing else' grep -qx 'GET /image.jpg?width=480&height=270&qfactor=40 HTTP/1.0' "$work/mj/reqs"
+check 'the log records the published picture, its size and the time it took' grep -qE 'snapshot published, 12000 bytes in [0-9]+ ms' "$work/daemon-snap.log"
+check 'the request carries the configured path and nothing else' grep -qx 'GET /image.jpg?qfactor=60 HTTP/1.0' "$work/mj/reqs"
 docker exec "$broker" mosquitto_sub -h 127.0.0.1 -u home-assistant -P "$ha_password" -t 'doorview/front-door-camera/snapshot' -C 1 -W 3 -F '%r|%l' > "$work/snap-retained.log" 2> /dev/null
 check 'the picture is retained' grep -qx '1|12000' "$work/snap-retained.log"
 # A second, separate edge inside the 10 s cooldown: the hold time (2 s) runs out, the sensor goes OFF, motion starts again.
@@ -506,7 +508,18 @@ check 'a 20000-byte picture needs a three-byte length and arrives intact' wait_s
 check 'the 20000-byte payload is bit for bit the served image' test "$(last_snap_hex)" = "$(cat "$work/mj/img.hex")"
 check 'the daemon never reconnected while sending it' test "$(count_of "$work/daemon-snap.log" 'connected')" = 1
 
-for size in 25000 30000; do
+# A 1920x1080 picture is 120 to 250 KB. The daemon's limit (320 KiB) stays below the broker's packet limit (512 KiB).
+for size in 150000 320000; do
+    make_jpeg "$size"
+    sleep_s 4
+    before=$(snap_count)
+    rise
+    check "a $size-byte picture is published" wait_snap "$((before + 1))" 8
+    check "the $size-byte payload is bit for bit the served image" test "$(last_snap_hex)" = "$(cat "$work/mj/img.hex")"
+    check "the $size-byte picture is reported with its length" test "$(tail -n 1 "$work/snap.log" | cut -d'|' -f2)" = "$size"
+    check "the daemon did not reconnect after the $size-byte picture" test "$(count_of "$work/daemon-snap.log" 'connected')" = 1
+done
+for size in 330000 400000; do
     make_jpeg "$size"
     sleep_s 4
     before=$(snap_count)
@@ -515,6 +528,7 @@ for size in 25000 30000; do
     check "a $size-byte picture (over the limit) is not published" test "$(snap_count)" = "$before"
 done
 check 'the log names the oversized pictures' test "$(count_of "$work/daemon-snap.log" 'snapshot: ')" -ge 2
+check 'the daemon is still connected after the oversized pictures' test "$(count_of "$work/daemon-snap.log" 'connected')" = 1
 make_jpeg 12000
 
 for broken in notfound html truncated; do

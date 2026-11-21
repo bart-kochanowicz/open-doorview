@@ -151,6 +151,8 @@ video0:
 
 Write it to `/etc/majestic.yaml` on the camera (another flash write) and restart Majestic with `/etc/init.d/S95majestic restart`. A 300 s test decoded 1,504 frames at 5.03 fps.
 
+This profile limits snapshots too: Majestic cuts a still from `video0` and never makes it larger, so the MQTT snapshot is at most 640 × 360. For full 1920 × 1080 pictures set `size: 1920x1080` (the unit has run it since 2026-11-21): the stream then does not play in real time, but the snapshots need no video session, and each is about 120 to 170 KB (see [Snapshot](mqtt-home-assistant.md#snapshot); the broker's packet limit must allow it).
+
 ## Step 7. Stage 2: LCD and button
 
 Take a fresh overlay backup (step 5). Then:

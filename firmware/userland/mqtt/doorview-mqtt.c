@@ -20,10 +20,10 @@
 #define MOTION_POLL_MS 1000u
 #define MOTION_IO_MS 300u
 #define METRICS_MAX 4096
-#define SNAPSHOT_MAX 24576 /* largest JPEG published */
+#define SNAPSHOT_MAX 327680 /* largest JPEG published; a 1920x1080 picture is about 120 to 250 KB */
 #define SNAPSHOT_RESPONSE_MAX (SNAPSHOT_MAX + 1024) /* HTTP headers included */
 #define SNAPSHOT_HEAD 256 /* room in front of the response for the MQTT header */
-#define SNAPSHOT_IO_MS 2000u
+#define SNAPSHOT_IO_MS 5000u
 #define SNAPSHOT_PENDING_MS 10000u
 
 struct config {
@@ -284,7 +284,7 @@ static int load_config(const char *path)
     cfg.motion_port = 80;
     cfg.motion_hold = 10;
     cfg.snapshot_cooldown = 30;
-    str_copy(cfg.snapshot_path, sizeof(cfg.snapshot_path), "/image.jpg?width=480&height=270&qfactor=40");
+    str_copy(cfg.snapshot_path, sizeof(cfg.snapshot_path), "/image.jpg?qfactor=60");
     str_copy(cfg.node, sizeof(cfg.node), "front-door-camera");
     str_copy(cfg.name, sizeof(cfg.name), "Front door camera");
     str_copy(cfg.discovery, sizeof(cfg.discovery), "homeassistant");
@@ -504,6 +504,7 @@ static u32 last_ping_ms;
 static u32 receive_length;
 static u8 receive_buffer[RECEIVE_MAX];
 
+/* Gives up after 5 s without progress, not 5 s in all: a 150 KB picture over a slow link may take longer. */
 static int send_all(const u8 *data, int length)
 {
     u32 started = sys_now_ms();
@@ -521,6 +522,7 @@ static int send_all(const u8 *data, int length)
         if (count <= 0)
             return -1;
         offset += count;
+        started = sys_now_ms();
     }
     last_sent_ms = sys_now_ms();
     return 0;
@@ -912,6 +914,7 @@ static int take_snapshot(void)
     int body_length = 0;
     int offset;
     int packet_length;
+    u32 sent_at;
     u8 *start;
 
     if (length < 0) {
@@ -929,15 +932,18 @@ static int take_snapshot(void)
     }
     topic(name, sizeof(name), "snapshot");
     start = write_publish_header(response + offset, body_length, name, 1, &packet_length);
+    sent_at = sys_now_ms();
     if (send_all(start, packet_length))
         return -1;
     {
-        char text[48];
+        char text[64];
         struct out o = { text, 0, (int)sizeof(text) - 1, 0 };
 
         put_text(&o, "snapshot published, ");
         put_decimal(&o, body_length);
-        put_text(&o, " bytes");
+        put_text(&o, " bytes in ");
+        put_decimal(&o, (int)(sys_now_ms() - sent_at));
+        put_text(&o, " ms");
         text[o.length] = 0;
         logmsg(text);
     }
