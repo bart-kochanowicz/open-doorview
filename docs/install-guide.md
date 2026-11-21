@@ -151,7 +151,7 @@ video0:
 
 Write it to `/etc/majestic.yaml` on the camera (another flash write) and restart Majestic with `/etc/init.d/S95majestic restart`. A 300 s test decoded 1,504 frames at 5.03 fps.
 
-For night vision add `nightMode: {irCutPin1: 8, lightMonitor: true}` to the same file (see [night vision](night-vision.md)).
+For night vision add `nightMode: {irCutPin1: 8, lightMonitor: true}` to the same file, and install the GC2053 noise profile `/etc/sensors/iq/gc2053.ini` made by `tools/gc2053-iq.sed` (see [night vision](night-vision.md)); there `slowShutter` is `medium`, which lets the exposure last longer in the dark at the cost of video frame rate.
 
 This profile limits snapshots too: Majestic cuts a still from `video0` and never makes it larger, so the MQTT snapshot is at most 640 × 360. For full 1920 × 1080 pictures set `size: 1920x1080` (the unit has run it since 2026-11-21): the stream then does not play in real time, but the snapshots need no video session, and each is about 120 to 170 KB (see [Snapshot](mqtt-home-assistant.md#snapshot); the broker's packet limit must allow it).
 
