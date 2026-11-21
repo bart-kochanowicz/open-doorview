@@ -25,7 +25,30 @@ Write it to `/etc/majestic.yaml` (a flash write: two identical overlay reads fir
 
 ## Not solved
 
-- **Motion detection in the dark.** In a nearly dark room Majestic's hardware motion detector (`sensitivity: 3`) fired about 85 times a second in night mode and about 105 times a second in forced day mode, with nobody moving: sensor noise at high gain, not the IR LEDs. The daemon's Motion sensor is then permanently ON, so no OFF to ON edge, no picture and no notification. Lowering `motionDetect.sensitivity` (0 to 8) or a region of interest is the obvious next step; neither was tried. Scene brightness in the test was far lower than a lit doorway is likely to be.
-- Night pictures are noisier and larger (215 to 326 KB at `qfactor` 50 and 1920 × 1080 in that dim room) and took up to 7 s to send. The daemon's limit is 320 KB, so a noisier picture would be refused; lowering the quality in `snapshot_path` (for example `qfactor=40`) is the setting to try.
-- The notification at night was not confirmed: the owner got none after one wave, which is consistent with the stuck Motion sensor above, but the Home Assistant side could not be read from that computer at the time.
+### Motion detection in the dark (measured 2026-11-21, observed on the unit)
+
+In a nearly dark room (gain at its maximum) Majestic's hardware motion detector reports rectangles all the time, with nobody moving, in night mode and in forced day mode alike. Home Assistant's recorder shows the consequence: the Motion sensor was **on for almost eight minutes without a break** (16:50:27 to 16:57:54), so no OFF to ON edge, no picture and no notification could follow.
+
+| `motionDetect.sensitivity` | rectangles per second, nobody moving |
+|---|---|
+| 3 (default) | about 85 |
+| 1 | about 59 |
+| 0 | about 38 |
+
+A hand waved in front of the lens for 15 s at sensitivity 0 gave about 60 per second: only about 1.6 times the noise. So neither the sensitivity nor a rate threshold in the daemon separates movement from noise in that scene. The unit was left at the default 3, which is the setting verified in daylight.
+
+Likely causes and ways forward, none tried yet:
+
+- **The ISP noise profile is for another sensor.** `/etc/sensors/iq/default.ini` is a link to `imx307.ini` (other profiles: `imx335`, `ov2735`, `sc2232`), while the factory firmware names the sensor GC2053 and ships its own day and night tuning (`image.ini`, `Night_level*.xml`). Less noise at night would help the motion detector and the picture size alike. A GC2053 profile would have to be built from the factory tuning.
+- **Use another trigger at night.** The front button already reaches Home Assistant as an event; taking a picture on a button press would not depend on the noise. The factory configuration says `support_pir=1`, but no PIR was ever found or read.
+- A region of interest (`motionDetect.roi`) restricts where noise counts but was not tried; a doorway at night, lit by the IR LEDs, may also be far less noisy than this dark room.
+- The snapshot is taken at the instant of the edge. After the lens was uncovered it caught a nearly black frame while the exposure adapted, and at a door it may catch the person only partly in view. A delay of one to two seconds is a change in the daemon.
+
+### Pictures
+
+Night pictures are noisier and larger (215 to 326 KB at `qfactor=60` and 1920 × 1080 in that dim room) and took up to 7 s to send. The unit now requests `snapshot_path=/image.jpg?qfactor=45` from `mqtt.conf`; measured on the same dim scene: 228 KB at 60, 181 KB at 45, 164 KB at 40. The daemon refuses a picture above 320 KB.
+
+### Other
+
+- The night notification was exercised once (the notification automation ran at 16:50 and 16:58, with a 215 KB and a nearly black 39 KB picture); a clean test, with the lens uncovered and more than a minute of waiting before the wave, was not done.
 - The IR LEDs stay on for the whole night; power draw and heat were not measured.
