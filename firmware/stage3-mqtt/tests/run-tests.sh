@@ -227,6 +227,9 @@ check 'the snapshot keys are kept in mqtt.conf' grep -qx 'snapshot_cooldown=60' 
 printf 'motion=1\nmotion_min_rate=20\nmotion_window=3\nsnapshot=1\nsnapshot_delay_ms=1500\n' | cat "$work/good.conf" - > "$work/rate.conf"
 check 'a configuration with the rate and delay keys is installed' configure "$work/rate.conf" --replace
 check 'the rate and delay keys are kept in mqtt.conf' grep -qx 'snapshot_delay_ms=1500' "$root/etc/doorview/mqtt.conf"
+printf 'live=1\nlive_seconds=30\nlive_interval_ms=500\nlive_path=/image.jpg?width=640&height=360&qfactor=40\n' | cat "$work/good.conf" - > "$work/live.conf"
+check 'a configuration with the live view keys is installed' configure "$work/live.conf" --replace
+check 'the live view keys are kept in mqtt.conf' grep -qx 'live_interval_ms=500' "$root/etc/doorview/mqtt.conf"
 
 root="$work/root-config-bad"
 build_root "$root"
@@ -329,6 +332,40 @@ password=b
 motion=1
 snapshot=1
 snapshot_delay_ms=soon"
+check_fails 'live=2 is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+live=2"
+check_fails 'a live_seconds of 0 is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+live=1
+live_seconds=0"
+check_fails 'a live_seconds of 301 is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+live=1
+live_seconds=301"
+check_fails 'a live_interval_ms of 99 is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+live=1
+live_interval_ms=99"
+check_fails 'a live_interval_ms of 5001 is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+live=1
+live_interval_ms=5001"
+check_fails 'a live_path with a space is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+live=1
+live_path=/image.jpg HTTP/1.1"
+check_fails 'a live_path without a leading slash is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+live=1
+live_path=image.jpg"
 check_fails 'a snapshot_cooldown of 0 is rejected' try_bad "host=192.0.2.20
 user=a
 password=b

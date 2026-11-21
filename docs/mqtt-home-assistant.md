@@ -72,7 +72,7 @@ snapshot_cooldown=30
 
 `motion=1` turns the motion sensor on (default 0, no entity is created); `motion_port` is the port of Majestic's web server on the camera itself (default 80) `motion_hold` the seconds the sensor stays ON after the last rise of the counter (1 to 600, default 10), and `motion_min_rate` with `motion_window` a threshold on how fast it rises (see [Motion](#motion)): `motion_min_rate` is the rectangles per second the counter must gain, measured over the newest stretch of at least `motion_window` seconds (1 to 10, default 3); 0, the default, means any rise.
 
-`snapshot=1` (default 0; needs `motion=1`) publishes a picture when motion starts. `snapshot_path` is the request path on the camera's own web server (default `/image.jpg?qfactor=60`; `width` and `height` can make the picture smaller but never larger than the main stream, see [Snapshot](#snapshot); letters, digits and `/ . _ - ? & = %` only, so it cannot add a header line) `snapshot_cooldown` the minimum seconds between pictures (1 to 3600, default 30) and `snapshot_delay_ms` how long after the motion edge the picture is taken (0 to 5000 ms, default 0): the first frame after a change of light can be nearly black, and a person at a door may not be in view yet.
+`snapshot=1` (default 0; needs `motion=1`) publishes a picture when motion starts. `snapshot_path` is the request path on the camera's own web server (default `/image.jpg?qfactor=60`; `width` and `height` can make the picture smaller but never larger than the main stream, see [Snapshot](#snapshot); letters, digits and `/ . _ - ? & = %` only, so it cannot add a header line) `live=1` (default 0) enables the [live view](#live-view) with `live_seconds` (1 to 300, default 30), `live_interval_ms` (100 to 5000, default 500) and `live_path` (the request for each picture, default `/image.jpg?width=640&height=360&qfactor=40`); `snapshot_cooldown` the minimum seconds between pictures (1 to 3600, default 30) and `snapshot_delay_ms` how long after the motion edge the picture is taken (0 to 5000 ms, default 0): the first frame after a change of light can be nearly black, and a person at a door may not be in view yet.
 
 `wifi_watchdog=1` makes the daemon request a station reconnect when the broker has been unreachable for 3 minutes and no frame was received for 90 s, at most once per 5 minutes. It is **off by default**: in the one case where a software reconnect was tried on a dead Wi-Fi data path it did not help.
 
@@ -100,6 +100,24 @@ On the Motion edge OFF to ON (not on every poll) the daemon requests `snapshot_p
 **Resolution.** Majestic cuts a still from the main stream (`video0`) and never makes it larger: with `size: 640x360` every request, whatever `width` and `height` say, is at most 640 by 360 (observed on the unit; smaller values such as 480 by 270 were honoured). Since 2026-11-21 the unit runs `video0.size: 1920x1080`, so the default request gives a full 1920 by 1080 picture. Measured on the unit (observed): 123 KB at `qfactor=40`, 142 KB at 50, 165 KB at 60 (1920 by 1080, a dim indoor scene); 67 KB at 1280 by 720 with the default quality. Sending a picture of 135 to 168 KB over the Wi-Fi took 3.9 to 4.9 s (the log line `snapshot published, N bytes in M ms`), about 34 KB/s. The broker must accept the packet: the production broker's `max_packet_size` was raised to 512 KiB for this, and a larger packet makes it drop the camera.
 
 **Cost of a 1080p main stream.** The RTSP and HTTP video (`stream=0`) is then 1080p at 5 fps and 128 kb/s, which the earlier tests showed does not play in real time over the SDIO link; live video was not retested at this size. The LCD preview uses a separate scaler output and was reported working by the owner after the change. To get live video back, set `video0.size` to `640x360` (and accept 640 by 360 stills).
+
+## Live view
+
+Home Assistant has no route to the camera (its web interface gives root to any login), so a live picture also goes through the broker, as a slide show on demand. With `live=1` the daemon subscribes, after every connection, to `doorview/<node>/live/set`.
+
+| Topic | Who | Payload |
+|---|---|---|
+| `doorview/<node>/live/set` | Home Assistant publishes | `ON` or `OFF`, QoS 0, **not retained** |
+| `doorview/<node>/live` | the camera publishes | one JPEG (about 10 to 25 KB at 640 by 360), QoS 0, **not retained**, at most one per `live_interval_ms`, only while a view runs |
+| `doorview/<node>/live/state` | the camera publishes | `ON` or `OFF`, **retained**; `OFF` after every (re)connection |
+
+`ON` starts a view and sets its end to `live_seconds` from that moment (another `ON` during a view restarts the time); `OFF` or the end stops it, and the state follows. Each picture is requested from Majestic on the loopback interface (`live_path`), checked to be a complete JPEG, and published. A picture that Majestic cannot give is skipped and logged once per view. A motion snapshot is still taken while a view runs; the view pauses while it is sent (a large night picture can take several seconds at about 35 KB/s).
+
+What the daemon ignores on the command topic, on purpose: any payload other than exactly `ON` or `OFF`; any message with the retain flag (a retained `ON` would start a view at every reconnect); any message above QoS 0. A message too large for the daemon's 512-byte receive buffer is dropped as it arrives (earlier, a too-large packet closed the connection, which would have let anyone who can publish there disconnect the camera). Home Assistant's user and the camera are the only ones with access to these topics; anyone with write access to `.../live/set` can start a view.
+
+**The broker's ACL needs one line for the camera:** `topic read doorview/front-door-camera/live/set` (its write line `doorview/front-door-camera/#` already covers the pictures and the state). Without it Mosquitto 2.1 still answers the subscription with a granted SUBACK and delivers nothing (observed: SUBACK `9003000100`), so the camera cannot tell and the view just never starts. Home Assistant declares the entities by hand (the ACL permits no discovery for them).
+
+Tested with a real Mosquitto and a fake Majestic (see the test suite): pictures that match what Majestic served, not retained, at most one per interval, the end by time and by `OFF`, the restart by a second `ON`, ignored payloads and retained `ON`, a 70,000-byte payload on the command topic without a disconnect, a motion snapshot during a view, a Majestic that answers with a page that is not a JPEG, and the configuration refusals. **Not yet run on a camera**: the real picture size, the time per picture over the SDIO link, and how it affects the Wi-Fi.
 
 ## How it works
 

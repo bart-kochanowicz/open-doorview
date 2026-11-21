@@ -4,6 +4,8 @@
  *   doorview_control: command=a5 length=8                button
  * With motion=1 it also polls Majestic's motion counter on the loopback interface (see fetch_motion_total), and with
  * snapshot=1 it publishes a JPEG from Majestic when motion starts, so Home Assistant never has to reach the camera.
+ * With live=1 it subscribes to doorview/<node>/live/set and, on ON, publishes small pictures to doorview/<node>/live for
+ * live_seconds (a slide show on demand); OFF or the time running out ends it.
  * Platform access goes through sys.h, so the same logic runs on the camera and on a test host. */
 #include "sys.h"
 
@@ -49,6 +51,10 @@ struct config {
     int snapshot;
     int snapshot_cooldown;
     int snapshot_delay_ms;
+    int live;
+    int live_seconds;
+    int live_interval_ms;
+    char live_path[128];
     char snapshot_path[128];
 };
 
@@ -287,6 +293,9 @@ static int load_config(const char *path)
     cfg.motion_port = 80;
     cfg.motion_hold = 10;
     cfg.motion_window = 3;
+    cfg.live_seconds = 30;
+    cfg.live_interval_ms = 500;
+    str_copy(cfg.live_path, sizeof(cfg.live_path), "/image.jpg?width=640&height=360&qfactor=40");
     cfg.snapshot_cooldown = 30;
     str_copy(cfg.snapshot_path, sizeof(cfg.snapshot_path), "/image.jpg?qfactor=60");
     str_copy(cfg.node, sizeof(cfg.node), "front-door-camera");
@@ -396,6 +405,21 @@ static int load_config(const char *path)
             if (!parse_number(value, &number) || number < 0 || number > 5000)
                 return -17;
             cfg.snapshot_delay_ms = number;
+        } else if (str_eq(line, "live")) {
+            cfg.live = str_eq(value, "1");
+        } else if (str_eq(line, "live_seconds")) {
+            if (!parse_number(value, &number) || number < 1 || number > 300)
+                return -18;
+            cfg.live_seconds = number;
+        } else if (str_eq(line, "live_interval_ms")) {
+            if (!parse_number(value, &number) || number < 100 || number > 5000)
+                return -19;
+            cfg.live_interval_ms = number;
+        } else if (str_eq(line, "live_path")) {
+            if (!valid_path(value))
+                return -20;
+            if (!store(cfg.live_path, sizeof(cfg.live_path), value))
+                return -9;
         } else if (str_eq(line, "snapshot")) {
             cfg.snapshot = str_eq(value, "1");
         } else if (str_eq(line, "snapshot_path")) {
@@ -518,6 +542,7 @@ static u32 last_received_ms;
 static u32 last_up_ms;
 static u32 last_ping_ms;
 static u32 receive_length;
+static u32 skip_bytes; /* the rest of an oversized PUBLISH that is being dropped */
 static u8 receive_buffer[RECEIVE_MAX];
 
 /* Gives up after 5 s without progress, not 5 s in all: a 150 KB picture over a slow link may take longer. */
@@ -550,6 +575,7 @@ static void link_fail(const char *reason)
         sys_close(socket_fd);
     socket_fd = -1;
     receive_length = 0;
+    skip_bytes = 0;
     link = LINK_DOWN;
     next_attempt_ms = sys_now_ms() + backoff_ms;
     if (backoff_ms < BACKOFF_MAX_MS)
@@ -582,6 +608,8 @@ static u32 last_button_us;
 static int have_last_button;
 static int motion_state = -1; /* 0/1, -1 until the first successful poll */
 static int dirty_motion;
+static int dirty_live;
+static int live_active; /* a live view is running */
 static int have_motion_total;
 static u32 motion_total;
 static u32 motion_until_ms;
@@ -731,6 +759,11 @@ static int publish_states(int everything)
         if (publish("motion", motion_state ? "ON" : "OFF", 1))
             return -1;
         dirty_motion = 0;
+    }
+    if (cfg.live && (everything || dirty_live)) {
+        if (publish("live/state", live_active ? "ON" : "OFF", 1))
+            return -1;
+        dirty_live = 0;
     }
     return 0;
 }
@@ -1023,6 +1056,109 @@ static int take_snapshot(void)
     return 0;
 }
 
+/* ---- live view ---- */
+
+static u32 live_deadline_ms;
+static u32 live_next_ms;
+static u32 live_frames;
+static int live_warned; /* a picture that Majestic could not give was already logged in this view */
+static char live_set_topic[96]; /* doorview/<node>/live/set */
+
+static void live_start(u32 now)
+{
+    if (!live_active) {
+        live_active = 1;
+        live_frames = 0;
+        live_warned = 0;
+        live_next_ms = now;
+        dirty_live = 1;
+        logmsg("live view started");
+    }
+    live_deadline_ms = now + (u32)cfg.live_seconds * 1000u;
+}
+
+static void live_stop(void)
+{
+    char text[48];
+    struct out o = { text, 0, (int)sizeof(text) - 1, 0 };
+
+    if (!live_active)
+        return;
+    live_active = 0;
+    dirty_live = 1;
+    put_text(&o, "live view ended, ");
+    put_decimal(&o, (int)live_frames);
+    put_text(&o, " pictures");
+    text[o.length] = 0;
+    logmsg(text);
+}
+
+/* Publishes one small picture, not retained. Returns -1 only when the MQTT socket failed. */
+static int take_live_frame(void)
+{
+    char name[96];
+    u8 *response = snapshot_buffer + SNAPSHOT_HEAD;
+    int length = http_get(cfg.live_path, response, SNAPSHOT_RESPONSE_MAX, SNAPSHOT_IO_MS, 0);
+    int body_length = 0;
+    int offset = -1;
+    int packet_length;
+    u8 *start;
+
+    if (length >= 0 && length < SNAPSHOT_RESPONSE_MAX)
+        offset = find_jpeg(response, length, &body_length);
+    if (offset < 0 || body_length > SNAPSHOT_MAX) {
+        if (!live_warned) {
+            live_warned = 1;
+            logmsg("live view: no usable picture from Majestic");
+        }
+        return 0;
+    }
+    topic(name, sizeof(name), "live");
+    start = write_publish_header(response + offset, body_length, name, 0, &packet_length);
+    if (send_all(start, packet_length))
+        return -1;
+    live_frames++;
+    return 0;
+}
+
+/* A PUBLISH from the broker. Only an ON or OFF on the command topic counts, and only when it is live and not retained:
+ * a retained ON would otherwise start a view on every reconnect. */
+static void handle_incoming_publish(u32 offset, u32 header, u32 length, u32 now)
+{
+    int flags = receive_buffer[offset] & 0x0f;
+    const u8 *body = receive_buffer + offset + header;
+    u32 topic_length;
+    u32 payload;
+    u32 index;
+
+    if (!cfg.live || (flags & 0x01) || (flags & 0x06) || length < 2)
+        return;
+    topic_length = ((u32)body[0] << 8) | body[1];
+    if (2 + topic_length > length || topic_length != (u32)str_len(live_set_topic))
+        return;
+    for (index = 0; index < topic_length; index++)
+        if (body[2 + index] != (u8)live_set_topic[index])
+            return;
+    payload = 2 + topic_length;
+    if (length - payload == 2 && body[payload] == 'O' && body[payload + 1] == 'N')
+        live_start(now);
+    else if (length - payload == 3 && body[payload] == 'O' && body[payload + 1] == 'F' && body[payload + 2] == 'F')
+        live_stop();
+}
+
+static int send_subscribe(void)
+{
+    struct out o = { (char *)packet + 5, 0, PACKET_MAX - 5, 0 };
+
+    put_byte(&o, 0); /* packet identifier */
+    put_byte(&o, 1);
+    put_string16(&o, live_set_topic);
+    put_byte(&o, 0); /* QoS 0 */
+    if (o.overflow)
+        return -1;
+    return send_all(packet, finish_packet(0x82, o.length));
+}
+
 /* ---- kernel log parsing ---- */
 
 static int hex_value(char c)
@@ -1231,8 +1367,11 @@ static void on_connected(u32 now)
     last_received_ms = now;
     last_ping_ms = now;
     logmsg("connected");
+    live_active = 0; /* a clean session: nothing was subscribed and no view runs */
     if (publish_discovery() || publish("availability", "online", 1) || publish_states(1) || publish_uptime())
         link_fail("publish failed after connect");
+    else if (cfg.live && send_subscribe())
+        link_fail("subscribe failed");
     last_uptime_ms = now;
 }
 
@@ -1267,6 +1406,14 @@ static void process_receive(u32 now)
         header = index - offset;
         total = header + length;
         if (total > RECEIVE_MAX) {
+            if ((receive_buffer[offset] >> 4) == 3) {
+                /* A PUBLISH too large to keep, for example a big payload on the command topic: drop it as it
+                 * arrives instead of letting anyone who can publish there disconnect the camera. */
+                skip_bytes = total - (receive_length - offset);
+                offset = receive_length;
+                last_received_ms = now;
+                goto compact;
+            }
             link_fail("packet too large");
             return;
         }
@@ -1285,6 +1432,8 @@ static void process_receive(u32 now)
                 return;
             }
         }
+        else if (type == 3)
+            handle_incoming_publish(offset, header, length, now);
         offset += total;
     }
 compact:
@@ -1301,8 +1450,21 @@ compact:
 static void read_socket(u32 now)
 {
     for (;;) {
-        int count = sys_read(socket_fd, receive_buffer + receive_length, (int)(RECEIVE_MAX - receive_length));
+        int count;
 
+        if (skip_bytes) {
+            count = sys_read(socket_fd, receive_buffer, (int)(skip_bytes < RECEIVE_MAX ? skip_bytes : RECEIVE_MAX));
+            if (count == SYS_EAGAIN)
+                return;
+            if (count <= 0) {
+                link_fail("connection closed");
+                return;
+            }
+            skip_bytes -= (u32)count;
+            last_received_ms = now;
+            continue;
+        }
+        count = sys_read(socket_fd, receive_buffer + receive_length, (int)(RECEIVE_MAX - receive_length));
         if (count == SYS_EAGAIN)
             return;
         if (count <= 0) {
@@ -1329,6 +1491,7 @@ int app_main(const char *config_path)
     put_text(&prefix, "doorview/");
     put_text(&prefix, cfg.node);
     node_prefix[prefix.length] = 0;
+    topic(live_set_topic, sizeof(live_set_topic), "live/set");
     kmsg_fd = sys_open_read(cfg.kmsg, 1);
     if (kmsg_fd < 0) {
         logmsg("cannot open the kernel log");
@@ -1403,6 +1566,24 @@ int app_main(const char *config_path)
                     }
                 }
             }
+            if (live_active) {
+                if ((int)(now - live_deadline_ms) >= 0) {
+                    live_stop();
+                } else if ((int)(now - live_next_ms) >= 0) {
+                    live_next_ms = now + (u32)cfg.live_interval_ms;
+                    if (take_live_frame()) {
+                        link_fail("publish failed");
+                        break;
+                    }
+                    now = sys_now_ms();
+                    if ((int)(live_next_ms - now) < 0)
+                        live_next_ms = now; /* the picture took longer than the interval: no burst to catch up */
+                }
+            }
+            if (dirty_live && publish_states(0)) {
+                link_fail("publish failed");
+                break;
+            }
             if (now - last_uptime_ms >= UPTIME_PERIOD_MS) {
                 last_uptime_ms = now;
                 if (publish_uptime()) {
@@ -1429,6 +1610,11 @@ int app_main(const char *config_path)
         watchdog(now);
         if (snapshot_pending) {
             int until = (int)(snapshot_due_ms - now);
+
+            wait_ms = until < 1 ? 1 : (until < wait_ms ? until : wait_ms);
+        }
+        if (live_active) {
+            int until = (int)(live_next_ms - now);
 
             wait_ms = until < 1 ? 1 : (until < wait_ms ? until : wait_ms);
         }

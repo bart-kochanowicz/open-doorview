@@ -62,6 +62,7 @@ count_of() {
 
 ha_password=$(python3 -c 'import secrets; print(secrets.token_hex(12))')
 camera_password=$(python3 -c 'import secrets; print(secrets.token_hex(12))')
+noread_password=$(python3 -c 'import secrets; print(secrets.token_hex(12))')
 mkdir -p "$work/broker"
 cat > "$work/broker/mosquitto.conf" << EOF
 listener 1883
@@ -76,16 +77,20 @@ cat > "$work/broker/acl" << 'EOF'
 user home-assistant
 topic readwrite #
 
+user front-door-noread
+topic write doorview/front-door-camera/#
+
 user front-door-camera
 topic write doorview/front-door-camera/#
 topic write homeassistant/sensor/front-door-camera/+/config
 topic write homeassistant/binary_sensor/front-door-camera/+/config
 topic write homeassistant/event/front-door-camera/+/config
 topic write homeassistant/image/front-door-camera/+/config
+topic read doorview/front-door-camera/live/set
 EOF
 : > "$work/broker/passwd"
 docker run --rm -v "$work/broker:/mosquitto/config" eclipse-mosquitto:2 sh -c \
-    "mosquitto_passwd -b /mosquitto/config/passwd home-assistant '$ha_password' && mosquitto_passwd -b /mosquitto/config/passwd front-door-camera '$camera_password'" > /dev/null 2>&1
+    "mosquitto_passwd -b /mosquitto/config/passwd home-assistant '$ha_password' && mosquitto_passwd -b /mosquitto/config/passwd front-door-camera '$camera_password' && mosquitto_passwd -b /mosquitto/config/passwd front-door-noread '$noread_password'" > /dev/null 2>&1
 chmod 644 "$work/broker/passwd" "$work/broker/acl" "$work/broker/mosquitto.conf"
 
 start_broker() {
@@ -582,8 +587,10 @@ check 'a quiet counter leaves Motion off and publishes no picture' test "$(motio
 drive 8 9
 check 'noise of 8 per second, below the threshold of 20, keeps Motion off' test "$(motion_on)" = 0
 check 'and publishes no picture' test "$(snap_count)" = 0
-drive 40 1.5
-check 'movement needs a few seconds of history: no ON after 1.5 s at 40 per second' test "$(motion_on)" = 0
+# One second at 40 per second after noise of 8 per second gains at most 56 over the 3 s window (about 19 per second),
+# below the threshold of 20, whatever the alignment of the polls.
+drive 40 1
+check 'one second of movement at 40 per second is not 20 per second over the 3 s window' test "$(motion_on)" = 0
 drive 40 7
 check 'movement at 40 per second, above the threshold, turns Motion on' test "$(motion_on)" -ge 1
 check 'and publishes one picture' wait_snap 1 6
@@ -636,6 +643,162 @@ kill "$snap_sub_pid" 2> /dev/null
 kill "$sub_pid" 2> /dev/null
 start_subscriber
 
+
+echo '== live view =='
+# HA asks for a live view with ON on doorview/<node>/live/set; the camera answers with small pictures on .../live for a
+# limited time and reports .../live/state. A real broker and a fake Majestic; the broker's ACL lets the camera read only
+# the command topic.
+ha_pub() { # <topic> <payload> [extra mosquitto_pub options]
+    local topic=$1 payload=$2
+    shift 2
+    docker exec "$broker" mosquitto_pub -h 127.0.0.1 -u home-assistant -P "$ha_password" -t "$topic" -m "$payload" "$@" > /dev/null 2>&1
+}
+live_count() { wc -l < "$work/live.log" | tr -d ' '; }
+live_state() { grep -a '^1|\|^0|' "$work/live-state.log" 2> /dev/null | tail -n 1 | cut -d'|' -f2; }
+wait_live() { # <count> <seconds>
+    for i in $(seq 1 "$(($2 * 10))"); do [ "$(live_count)" -ge "$1" ] && return 0; sleep_s 0.1; done
+    return 1
+}
+start_live_subscribers() {
+    : > "$work/live.log"
+    : > "$work/live-state.log"
+    docker exec "$broker" mosquitto_sub -h 127.0.0.1 -u home-assistant -P "$ha_password" -t 'doorview/front-door-camera/live' -F '%r|%l|%x' >> "$work/live.log" 2> /dev/null &
+    live_sub_pid=$!
+    docker exec "$broker" mosquitto_sub -h 127.0.0.1 -u home-assistant -P "$ha_password" -t 'doorview/front-door-camera/live/state' -F '%r|%p' >> "$work/live-state.log" 2> /dev/null &
+    live_state_pid=$!
+    sleep_s 0.5
+}
+stop_live_subscribers() { kill "$live_sub_pid" "$live_state_pid" 2> /dev/null; }
+
+# The subscriber started at the end of the previous section keeps running: killing a background job right after it was
+# started can run the inherited EXIT trap in that half-started subshell and delete the work directory.
+make_jpeg 12000
+start_majestic
+set_mode normal
+rm -f "$work/mj/imgmode" "$work/mj/reqs"
+snap_total=0
+set_total 0
+start_live_subscribers
+: > "$work/snap.log"
+docker exec "$broker" mosquitto_sub -h 127.0.0.1 -u home-assistant -P "$ha_password" -t 'doorview/front-door-camera/snapshot' -F '%r|%l|%x' >> "$work/snap.log" 2> /dev/null &
+snap_sub_pid=$!
+
+echo '-- a view on demand'
+start_snap_daemon 1 'live=1\nlive_seconds=4\nlive_interval_ms=300'
+sleep_s 1.5
+check 'live=1 publishes the state OFF, retained' test "$(live_state)" = OFF
+check 'the state is retained (a late subscriber sees it)' sh -c "docker exec '$broker' mosquitto_sub -h 127.0.0.1 -u home-assistant -P '$ha_password' -t 'doorview/front-door-camera/live/state' -C 1 -W 3 -F '%r|%p' | grep -qx '1|OFF'"
+check 'no picture is published before the command' test "$(live_count)" = 0
+t0=$(now_s)
+ha_pub doorview/front-door-camera/live/set ON
+check 'ON starts the pictures' wait_live 3 4
+check 'and the state turns ON' wait_for "$work/live-state.log" '|ON' 3
+check 'the pictures are exactly the JPEG Majestic served (12000 bytes)' test "$(tail -n 1 "$work/live.log" | cut -d'|' -f3)" = "$(cat "$work/mj/img.hex")"
+check 'the request is the configured small picture' grep -qx 'GET /image.jpg?width=640&height=360&qfactor=40 HTTP/1.0' "$work/mj/reqs"
+sleep_s 6
+t1=$(now_s)
+frames=$(live_count)
+check 'it ends by itself after live_seconds' test "$(live_state)" = OFF
+sleep_s 1.5
+check 'and no picture comes after the end' test "$(live_count)" = "$frames"
+check 'at most one picture per live_interval_ms (300 ms) over 4 s' test "$frames" -le 15
+check 'and a fair number of them' test "$frames" -ge 6
+check 'the daemon stayed connected the whole time (keepalive was served)' test "$(count_of "$work/daemon-snap.log" 'connected')" = 1
+# A subscriber that is already connected is handed a retained message with the retain flag cleared, so only a late
+# subscriber shows whether a picture was left on the broker.
+check_not 'no picture is left retained on the broker (a late subscriber gets none)' sh -c "docker exec '$broker' mosquitto_sub -h 127.0.0.1 -u home-assistant -P '$ha_password' -t 'doorview/front-door-camera/live' -C 1 -W 2 -F '%l' | grep -q ."
+check 'the log says the view started and ended' sh -c "grep -q 'live view started' '$work/daemon-snap.log' && grep -qE 'live view ended, [0-9]+ pictures' '$work/daemon-snap.log'"
+
+echo '-- OFF and ON again'
+: > "$work/live.log"
+ha_pub doorview/front-door-camera/live/set ON
+wait_live 2 4
+ha_pub doorview/front-door-camera/live/set OFF
+sleep_s 1
+check 'OFF ends the view at once and the state follows' test "$(live_state)" = OFF
+frames=$(live_count)
+sleep_s 1.5
+check 'and no picture comes after OFF' test "$(live_count)" = "$frames"
+: > "$work/live.log"
+ha_pub doorview/front-door-camera/live/set ON
+sleep_s 2.5
+ha_pub doorview/front-door-camera/live/set ON
+sleep_s 2
+before=$(live_count)
+sleep_s 1.5
+check 'a second ON restarts the time: pictures still come after the first deadline (4 s)' test "$(live_count)" -gt "$before"
+sleep_s 4
+check 'and it ends after the new deadline' test "$(live_state)" = OFF
+
+echo '-- what the command topic must not do'
+: > "$work/live.log"
+for payload in on 'ON ' ONN '' OFFER 1 true; do ha_pub doorview/front-door-camera/live/set "$payload"; done
+sleep_s 2
+check 'other payloads (on, "ON ", ONN, empty, OFFER, 1, true) start nothing' test "$(live_count)" = 0
+head -c 70000 /dev/zero | tr '\0' 'x' | docker exec -i "$broker" mosquitto_pub -h 127.0.0.1 -u home-assistant -P "$ha_password" -t doorview/front-door-camera/live/set -s > /dev/null 2>&1
+sleep_s 1.5
+check 'a 70000-byte payload on the command topic is dropped without disconnecting the camera' test "$(count_of "$work/daemon-snap.log" 'connected')" = 1
+check_not 'and it starts nothing' test "$(live_count)" -gt 0
+ha_pub doorview/front-door-camera/live/set ON
+check 'the stream after the big payload is still read correctly: ON works' wait_live 2 4
+ha_pub doorview/front-door-camera/live/set OFF
+sleep_s 1
+check 'and the camera is still the same connection' test "$(count_of "$work/daemon-snap.log" 'connected')" = 1
+
+echo '-- a motion picture while a view runs'
+: > "$work/live.log"
+before=$(snap_count)
+ha_pub doorview/front-door-camera/live/set ON
+sleep_s 1
+rise
+check 'the motion picture is published while the view runs' wait_snap "$((before + 1))" 9
+sleep_s 1
+check 'and the view goes on afterwards' wait_live 6 6
+ha_pub doorview/front-door-camera/live/set OFF
+sleep_s 1
+check_not 'the sanitizers report nothing in the live run' grep -qE 'AddressSanitizer|runtime error' "$work/daemon-snap.log"
+kill_daemon
+
+echo '-- a retained ON is not a command'
+ha_pub doorview/front-door-camera/live/set ON -r
+: > "$work/live.log"
+start_snap_daemon 1 'live=1\nlive_seconds=4\nlive_interval_ms=300'
+sleep_s 3
+check 'a retained ON that the broker hands over on subscribe starts nothing' test "$(live_count)" = 0
+ha_pub doorview/front-door-camera/live/set '' -r
+kill_daemon
+
+echo '-- live off, and a camera that may not read the command topic'
+start_snap_daemon 1
+: > "$work/live.log"
+ha_pub doorview/front-door-camera/live/set ON
+sleep_s 2
+check 'without live=1 an ON does nothing' test "$(live_count)" = 0
+kill_daemon
+# Mosquitto grants such a subscription (SUBACK QoS 0) and simply delivers nothing, so the camera cannot tell: a missing
+# ACL line shows only as a view that never starts.
+start_snap_daemon 1 "live=1\nuser=front-door-noread\npassword=$noread_password"
+: > "$work/live.log"
+ha_pub doorview/front-door-camera/live/set ON
+sleep_s 2.5
+check 'a camera whose broker user may not read the command topic gets no command' test "$(live_count)" = 0
+check 'and it stays connected and running' sh -c "kill -0 '$daemon_pid' && test \"\$(grep -c connected '$work/daemon-snap.log')\" = 1"
+kill_daemon
+echo '-- Majestic gives nothing usable'
+printf 'html' > "$work/mj/imgmode"
+start_snap_daemon 1 'live=1\nlive_seconds=3\nlive_interval_ms=300'
+: > "$work/live.log"
+ha_pub doorview/front-door-camera/live/set ON
+sleep_s 4.5
+check 'no picture is published when Majestic answers with a page that is not a JPEG' test "$(live_count)" = 0
+check 'it is logged once, not for every try' test "$(count_of "$work/daemon-snap.log" 'live view: no usable picture from Majestic')" = 1
+check 'and the view still ends by itself' test "$(live_state)" = OFF
+rm -f "$work/mj/imgmode"
+kill_daemon
+stop_live_subscribers
+kill "$snap_sub_pid" 2> /dev/null
+stop_majestic
+
 echo '== configuration =='
 # The daemon exits with 2 when the configuration is refused and, on a host without a readable kernel log (the test
 # gives it a missing path), with 3 once the configuration has been accepted. Any other non-zero exit would also
@@ -671,6 +834,12 @@ check 'a motion_window of 11 is rejected' test "$(config_exit 'host=127.0.0.1\nm
 check 'a snapshot_delay_ms of 0 and of 5000 are accepted' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsnapshot_delay_ms=0\n')$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsnapshot_delay_ms=5000\n')" = 33
 check 'a snapshot_delay_ms above 5000 is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsnapshot_delay_ms=5001\n')" = 2
 check 'a negative snapshot_delay_ms is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsnapshot_delay_ms=-5\n')" = 2
+check 'live_seconds 1 and 300 are accepted' test "$(config_exit 'host=127.0.0.1\nlive_seconds=1\n')$(config_exit 'host=127.0.0.1\nlive_seconds=300\n')" = 33
+check 'live_seconds 0 and 301 are rejected' test "$(config_exit 'host=127.0.0.1\nlive_seconds=0\n')$(config_exit 'host=127.0.0.1\nlive_seconds=301\n')" = 22
+check 'live_interval_ms 100 and 5000 are accepted' test "$(config_exit 'host=127.0.0.1\nlive_interval_ms=100\n')$(config_exit 'host=127.0.0.1\nlive_interval_ms=5000\n')" = 33
+check 'live_interval_ms 99 and 5001 are rejected' test "$(config_exit 'host=127.0.0.1\nlive_interval_ms=99\n')$(config_exit 'host=127.0.0.1\nlive_interval_ms=5001\n')" = 22
+check 'a live_path with a space is rejected' test "$(config_exit 'host=127.0.0.1\nlive_path=/image.jpg HTTP/1.1\n')" = 2
+check 'a live_path with a query string is accepted' test "$(config_exit 'host=127.0.0.1\nlive_path=/image.jpg?width=320&height=180&qfactor=30\n')" = 3
 check 'a snapshot cooldown above 3600 is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsnapshot_cooldown=3601\n')" = 2
 
 echo "passed=$passed failed=$failed"
