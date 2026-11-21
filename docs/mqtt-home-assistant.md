@@ -35,7 +35,7 @@
 | Button (event entity) | `A5` records | A press is a burst of records, counted once (250 ms window). History from before the daemon started is not replayed. |
 | Uptime (diagnostic) | `/proc/uptime` | Every 60 s, not retained. |
 | Motion (optional, `motion=1`) | Majestic's `md_rects_acc_total` | A binary sensor (`device_class: motion`). ON when the counter rises, OFF `motion_hold` seconds (default 10) after the last rise. See [Motion](#motion). Retained. |
-| Snapshot (optional, `snapshot=1`) | Majestic `/image.jpg` | An `image` entity. The JPEG taken when motion starts, published retained to `doorview/<node>/snapshot` (about 12 KB at the default size). See [Snapshot](#snapshot). |
+| Snapshot (optional, `snapshot=1`) | Majestic `/image.jpg` | An `image` entity. The JPEG taken when motion starts, published retained to `doorview/<node>/snapshot` (about 120 to 170 KB at the default 1920 × 1080; about 12 KB at 480 × 270). See [Snapshot](#snapshot). |
 | Availability | MQTT last will | `online` retained; the broker publishes `offline` (retained) if the camera disappears. |
 
 States are retained; button events and uptime are not. Topics are `doorview/<node>/...`; discovery is `<discovery>/<component>/<node>/<object>/config`, with unique ids prefixed by the node name.
@@ -62,7 +62,7 @@ motion=1
 motion_port=80
 motion_hold=10
 snapshot=1
-snapshot_path=/image.jpg?width=480&height=270&qfactor=40
+snapshot_path=/image.jpg?qfactor=60
 snapshot_cooldown=30
 ```
 
@@ -72,7 +72,7 @@ snapshot_cooldown=30
 
 `motion=1` turns the motion sensor on (default 0, no entity is created); `motion_port` is the port of Majestic's web server on the camera itself (default 80) and `motion_hold` the seconds the sensor stays ON after the last rise of the counter (1 to 600, default 10).
 
-`snapshot=1` (default 0; needs `motion=1`) publishes a picture when motion starts. `snapshot_path` is the request path on the camera's own web server (default `/image.jpg?width=480&height=270&qfactor=40`; letters, digits and `/ . _ - ? & = %` only, so it cannot add a header line) and `snapshot_cooldown` the minimum seconds between pictures (1 to 3600, default 30).
+`snapshot=1` (default 0; needs `motion=1`) publishes a picture when motion starts. `snapshot_path` is the request path on the camera's own web server (default `/image.jpg?qfactor=60`; `width` and `height` can make the picture smaller but never larger than the main stream, see [Snapshot](#snapshot); letters, digits and `/ . _ - ? & = %` only, so it cannot add a header line) and `snapshot_cooldown` the minimum seconds between pictures (1 to 3600, default 30).
 
 `wifi_watchdog=1` makes the daemon request a station reconnect when the broker has been unreachable for 3 minutes and no frame was received for 90 s, at most once per 5 minutes. It is **off by default**: in the one case where a software reconnect was tried on a dead Wi-Fi data path it did not help.
 
@@ -93,7 +93,11 @@ Observed on the unit (one camera, 2026-11-20): the counter rose from 0 to 148 an
 
 **Why the camera pushes the picture instead of Home Assistant pulling it.** The camera's web interface (Majestic, port 80) has one administrator account, the root password: its `access.cgi` page changes the root password, and it offers a terminal (`console.cgi`), a file manager, the configuration API (`/api/v1/set`), firmware update and factory reset. There are no roles. A second account (the root password is also what RTSP and SSH use) would be the same administrator under another name, sent in clear text over HTTP. So nothing outside the camera should be given a credential for port 80. (Read from the CGI scripts and the web server's route list on the unit; the pages were fetched from the camera itself, no remote administrator action was tried.) Requests from the camera itself skip authentication (observed), so the daemon can fetch the picture locally and send it over the connection it already has to the broker. Home Assistant needs no route and no password for the camera.
 
-On the Motion edge OFF to ON (not on every poll) the daemon requests `snapshot_path` from `127.0.0.1`, checks that the answer is `200` and that the body starts with the JPEG start marker and ends with the end marker (a half-read or an error page is never published), and publishes it retained to `doorview/<node>/snapshot`. At most one picture per `snapshot_cooldown` seconds; a picture whose edge is more than 10 s old (the broker was unreachable) is dropped. The picture is read into a static buffer and the MQTT header is written in front of it, so it is not copied; pictures above 24 KB are not published. At the default 480 by 270, quality 40, the picture was about 12 KB on the unit (640 by 360 at quality 30 gave about 16 KB, at the default quality 22 KB).
+On the Motion edge OFF to ON (not on every poll) the daemon requests `snapshot_path` from `127.0.0.1`, checks that the answer is `200` and that the body starts with the JPEG start marker and ends with the end marker (a half-read or an error page is never published), and publishes it retained to `doorview/<node>/snapshot`. At most one picture per `snapshot_cooldown` seconds; a picture whose edge is more than 10 s old (the broker was unreachable) is dropped. The picture is read into a static buffer and the MQTT header is written in front of it, so it is not copied; pictures above 320 KB are not published. The send gives up after 5 s without progress, not 5 s in all.
+
+**Resolution.** Majestic cuts a still from the main stream (`video0`) and never makes it larger: with `size: 640x360` every request, whatever `width` and `height` say, is at most 640 by 360 (observed on the unit; smaller values such as 480 by 270 were honoured). Since 2026-11-21 the unit runs `video0.size: 1920x1080`, so the default request gives a full 1920 by 1080 picture. Measured on the unit (observed): 123 KB at `qfactor=40`, 142 KB at 50, 165 KB at 60 (1920 by 1080, a dim indoor scene); 67 KB at 1280 by 720 with the default quality. Sending a picture of 135 to 168 KB over the Wi-Fi took 3.9 to 4.9 s (the log line `snapshot published, N bytes in M ms`), about 34 KB/s. The broker must accept the packet: the production broker's `max_packet_size` was raised to 512 KiB for this, and a larger packet makes it drop the camera.
+
+**Cost of a 1080p main stream.** The RTSP and HTTP video (`stream=0`) is then 1080p at 5 fps and 128 kb/s, which the earlier tests showed does not play in real time over the SDIO link; live video was not retested at this size. The LCD preview uses a separate scaler output and was reported working by the owner after the change. To get live video back, set `video0.size` to `640x360` (and accept 640 by 360 stills).
 
 ## How it works
 
