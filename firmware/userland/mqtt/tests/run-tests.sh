@@ -707,7 +707,8 @@ check 'the daemon stayed connected the whole time (keepalive was served)' test "
 # A subscriber that is already connected is handed a retained message with the retain flag cleared, so only a late
 # subscriber shows whether a picture was left on the broker.
 check_not 'no picture is left retained on the broker (a late subscriber gets none)' sh -c "docker exec '$broker' mosquitto_sub -h 127.0.0.1 -u home-assistant -P '$ha_password' -t 'doorview/front-door-camera/live' -C 1 -W 2 -F '%l' | grep -q ."
-check 'the log says the view started and ended' sh -c "grep -q 'live view started' '$work/daemon-snap.log' && grep -qE 'live view ended, [0-9]+ pictures' '$work/daemon-snap.log'"
+check 'the log counts the bytes: the pictures are 12000 bytes each' sh -c "grep -E 'live view ended, [0-9]+ pictures, [0-9]+ bytes' '$work/daemon-snap.log' | head -n 1 | awk '{ if (\$5 * 12000 == \$7) exit 0; exit 1 }'"
+check 'the log says the view started and ended' sh -c "grep -q 'live view started' '$work/daemon-snap.log' && grep -qE 'live view ended, [0-9]+ pictures, [0-9]+ bytes in [0-9]+ ms' '$work/daemon-snap.log'"
 
 echo '-- OFF and ON again'
 : > "$work/live.log"
