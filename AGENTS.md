@@ -55,7 +55,7 @@ Private material lives **outside** the repository (flash dumps, overlay backups,
 | OpenIPC compatibility | confirmed on one unit (GK7202V300, Linux 4.9.37) |
 | Wi-Fi, RTSP/HTTP | works at 640×360, 5 fps (stage 1 and 2); the unit now runs a 1080p main stream for the snapshots, so live video does not play in real time |
 | LCD preview and front button | works (stage 2) |
-| MQTT / Home Assistant | stage 3 installed on the camera (2026-11-20) with the newest daemon (`motion=1`, `snapshot=1`, 1920 × 1080 pictures of 135 to 168 KB; phone notifications with the picture reported by the owner): connects to the broker, publishes discovery and state, reconnects after reboots; hours of runtime, three reboots; the motion sensor works in hand-waving tests; the broker is separate infrastructure, not in this repository |
+| MQTT / Home Assistant | stage 3 installed on the camera (2026-11-20) with the newest daemon (`motion=1`, `snapshot=1`, 1920 × 1080 pictures of 135 to 168 KB; phone notifications with the picture reported by the owner; a software reboot with this build recovered by itself): connects to the broker, publishes discovery and state, reconnects after reboots; hours of runtime, three reboots; the motion sensor works in hand-waving tests; the broker is separate infrastructure, not in this repository |
 | Battery monitoring | MCU power frames decoded; capacity scale and charge state unconfirmed |
 | Reliable startup, recovery, update | startup works after a cold start; no automatic Wi-Fi reconnect; no OTA |
 
