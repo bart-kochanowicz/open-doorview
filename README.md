@@ -23,7 +23,7 @@ What is **not** done or not known (battery scale, charge state, PIR, audio, DHCP
 
 1. **[Install guide](docs/install-guide.md)**: from a factory camera to everything above, step by step, with checks and rollbacks.
 2. [Back up the factory flash](docs/flash-layout.md#backup-procedure) and [install OpenIPC](docs/openipc-flash.md).
-3. Background: [the Wi-Fi/battery coprocessor](docs/wifi-companion.md), [LCD and button](docs/lcd-and-button.md), [MQTT and Home Assistant](docs/mqtt-home-assistant.md).
+3. Background: [the Wi-Fi/battery coprocessor](docs/wifi-companion.md), [how the factory firmware sleeps and detects people](docs/factory-firmware.md), [LCD and button](docs/lcd-and-button.md), [MQTT and Home Assistant](docs/mqtt-home-assistant.md).
 4. [Troubleshooting](docs/troubleshooting.md), [building and testing](docs/building.md).
 
 ## Repository map
