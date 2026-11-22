@@ -2,6 +2,8 @@
 #include "sys.h"
 
 #define NR_exit 1
+#define NR_sync 36
+#define NR_reboot 88
 #define NR_read 3
 #define NR_write 4
 #define NR_open 5
@@ -161,6 +163,14 @@ u32 sys_now_ms(void)
 void sys_exit(int code)
 {
     call(NR_exit, code, 0, 0);
+    for (;;) {
+    }
+}
+
+void sys_reboot(void)
+{
+    call(NR_sync, 0, 0, 0);
+    call(NR_reboot, 0xfee1dead, 672274793 /* the second magic number */, 0x01234567 /* LINUX_REBOOT_CMD_RESTART */);
     for (;;) {
     }
 }

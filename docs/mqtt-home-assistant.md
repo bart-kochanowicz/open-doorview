@@ -64,6 +64,8 @@ motion_hold=10
 snapshot=1
 snapshot_path=/image.jpg?qfactor=60
 snapshot_cooldown=30
+motion_settle=60
+wifi_reboot=120
 ```
 
 `gateway` is the router of the camera's subnet. It is only used by `S97doorview-mqtt` (the daemon ignores the key), and only when the camera has no default route yet. Leave it out when the broker is in the camera's own subnet.
@@ -73,6 +75,10 @@ snapshot_cooldown=30
 `motion=1` turns the motion sensor on (default 0, no entity is created); `motion_port` is the port of Majestic's web server on the camera itself (default 80) `motion_hold` the seconds the sensor stays ON after the last rise of the counter (1 to 600, default 10), and `motion_min_rate` with `motion_window` a threshold on how fast it rises (see [Motion](#motion)): `motion_min_rate` is the rectangles per second the counter must gain, measured over the newest stretch of at least `motion_window` seconds (1 to 10, default 3); 0, the default, means any rise.
 
 `snapshot=1` (default 0; needs `motion=1`) publishes a picture when motion starts. `snapshot_path` is the request path on the camera's own web server (default `/image.jpg?qfactor=60`; `width` and `height` can make the picture smaller but never larger than the main stream, see [Snapshot](#snapshot); letters, digits and `/ . _ - ? & = %` only, so it cannot add a header line) `live=1` (default 0) enables the [live view](#live-view) with `live_seconds` (1 to 300, default 30), `live_interval_ms` (100 to 5000, default 500) and `live_path` (the request for each picture, default `/image.jpg?width=640&height=360&qfactor=40`); `snapshot_cooldown` the minimum seconds between pictures (1 to 3600, default 30) and `snapshot_delay_ms` how long after the motion edge the picture is taken (0 to 5000 ms, default 0): the first frame after a change of light can be nearly black, and a person at a door may not be in view yet.
+
+`motion_settle=<seconds>` (0 to 600, default 0) ignores every rise of the motion counter for that long after the daemon starts and after Majestic restarts (a counter that goes down). **Observed in the Home Assistant recorder on 2026-11-22:** after each of three restarts in the dark the sensor went ON for about 20 seconds, 29 to 50 seconds after the boot, and the automation sent a "no snapshot arrived" notification; the likely cause is the night switch and the detector settling (assumed, not measured: a daylight reboot gave a counter at 0 for 71 s). 60 covers the observed window.
+
+`wifi_reboot=<seconds>` (0 = off, the default; 30 to 3600 in `configure.sh`) restarts the camera (`sync`, then the `reboot` system call) when the broker has been unreachable for that long **and** the kernel's received-packet counter of `dv0` has not changed for that long, but never before four times that long have passed since the daemon started, so a path that is dead from boot on cannot make a tight restart loop. Why: see [the overnight stalls](wifi-companion.md#the-data-path-stalls-of-2026-11-22). The camera recovered from all three stalls by restarting; the daemon's restart is the same restart done sooner (assumed equivalent to the watchdog's, not proven on the unit).
 
 `wifi_watchdog=1` makes the daemon request a station reconnect when the broker has been unreachable for 3 minutes and no frame was received for 90 s, at most once per 5 minutes. It is **off by default**: in the one case where a software reconnect was tried on a dead Wi-Fi data path it did not help.
 

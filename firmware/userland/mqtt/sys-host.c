@@ -115,6 +115,11 @@ void sys_exit(int code)
     _exit(code);
 }
 
+void sys_reboot(void)
+{
+    _exit(86);
+}
+
 int main(int argc, char **argv)
 {
     signal(SIGPIPE, SIG_IGN); /* a closed socket must return an error, as on the camera */

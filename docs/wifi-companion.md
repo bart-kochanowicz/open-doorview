@@ -61,6 +61,14 @@ The driver prints these in the kernel log: `doorview_control: command=a5 length=
 
 With the polling driver the link repeatedly went silent: the frame counter froze, the "FIFO empty" counter grew by about 100 per second, and the MCU's button messages stopped, so the button did nothing. Silence began at about 40 s, 490 s and 1,870 s after boot in separate runs, with no button press involved. The interrupt-driven driver ran 45 and 47 minutes without a stall (`FIFO empty=0`, `errors=0` in every sample) and four of four button tests worked. About 100 minutes of total observation is **all the evidence there is**: earlier stalls came at random times up to 31 minutes, so a rare failure cannot be excluded.
 
+## The data path stalls of 2026-11-22
+
+**Observed on the unit** (UART sampler once a minute, 20:30 to 08:00, with the interrupt-driven driver and stage 3): the data path stopped three times, at about 00:39, 01:52 and 05:37, after 8 h, 63 min and 3.5 h of uptime. In each stall `rx_packets` of `dv0` froze (it normally gains 60 to 70 per minute), `FIFO empty` grew by about 9 per second, `errors` stayed 0, the UART kept answering, the broker dropped the camera for `exceeded timeout` about two minutes later, and the camera restarted by itself 9.5 to 10 minutes after the last good reading and came back with a working connection each time.
+
+**Observed in UniFi** (read-only, by the homelab agent): no disconnect, roam, AP event or channel change in any of the windows; the camera stayed associated from 16:36 the day before; its traffic fell to 11 to 20 % of normal with TX near zero. So the radio link was up and the stall is above it (the driver, the SDIO link or the MCU; **not established which**). UniFi does not keep deauth reason codes or signal history on this version.
+
+**The restart is Majestic's hardware watchdog** (**observed:** `/dev/watchdog` is open in the Majestic process only; `watchdog.enabled` and `timeout: 300` are the defaults in its schema; **assumed:** that a wedged event loop during the stall is what stops the feeding, nothing recorded it). `wifi_reboot` in `mqtt.conf` restarts the camera sooner from the daemon, from the same evidence.
+
 ## Things that went wrong, so you can avoid them
 
 - **`8A:7E` with payload `01`** (the factory firmware's "enable MCU heartbeat" application command) was sent once from a test module. The UART went silent and the camera needed a press of its power button. It is not part of any shipped file. Do not send commands to the MCU that the shipped drivers do not send.

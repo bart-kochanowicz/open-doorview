@@ -227,6 +227,10 @@ check 'the snapshot keys are kept in mqtt.conf' grep -qx 'snapshot_cooldown=60' 
 printf 'motion=1\nmotion_min_rate=20\nmotion_window=3\nsnapshot=1\nsnapshot_delay_ms=1500\n' | cat "$work/good.conf" - > "$work/rate.conf"
 check 'a configuration with the rate and delay keys is installed' configure "$work/rate.conf" --replace
 check 'the rate and delay keys are kept in mqtt.conf' grep -qx 'snapshot_delay_ms=1500' "$root/etc/doorview/mqtt.conf"
+printf 'motion=1\nmotion_settle=60\nwifi_reboot=120\n' | cat "$work/good.conf" - > "$work/settle.conf"
+check 'a configuration with motion_settle and wifi_reboot is installed' configure "$work/settle.conf" --replace
+check 'wifi_reboot is kept in mqtt.conf' grep -qx 'wifi_reboot=120' "$root/etc/doorview/mqtt.conf"
+check 'motion_settle is kept in mqtt.conf' grep -qx 'motion_settle=60' "$root/etc/doorview/mqtt.conf"
 printf 'live=1\nlive_seconds=30\nlive_interval_ms=500\nlive_path=/image.jpg?width=640&height=360&qfactor=40\n' | cat "$work/good.conf" - > "$work/live.conf"
 check 'a configuration with the live view keys is installed' configure "$work/live.conf" --replace
 check 'the live view keys are kept in mqtt.conf' grep -qx 'live_interval_ms=500' "$root/etc/doorview/mqtt.conf"
@@ -332,6 +336,23 @@ password=b
 motion=1
 snapshot=1
 snapshot_delay_ms=soon"
+check_fails 'a motion_settle above 600 is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+motion=1
+motion_settle=601"
+check_fails 'a wifi_reboot below 30 is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+wifi_reboot=29"
+check_fails 'a wifi_reboot above 3600 is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+wifi_reboot=3601"
+check_fails 'a non-numeric wifi_reboot is rejected' try_bad "host=192.0.2.20
+user=a
+password=b
+wifi_reboot=soon"
 check_fails 'live=2 is rejected' try_bad "host=192.0.2.20
 user=a
 password=b
