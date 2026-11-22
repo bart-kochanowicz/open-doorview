@@ -25,6 +25,8 @@ motion_port=
 motion_hold=
 motion_min_rate=
 motion_window=
+motion_settle=
+wifi_reboot=
 snapshot=
 snapshot_path=
 snapshot_cooldown=
@@ -47,6 +49,8 @@ while IFS= read -r line || [ -n "$line" ]; do
         motion_hold=*) motion_hold=${line#motion_hold=} ;;
         motion_min_rate=*) motion_min_rate=${line#motion_min_rate=} ;;
         motion_window=*) motion_window=${line#motion_window=} ;;
+        motion_settle=*) motion_settle=${line#motion_settle=} ;;
+        wifi_reboot=*) wifi_reboot=${line#wifi_reboot=} ;;
         snapshot=*) snapshot=${line#snapshot=} ;;
         snapshot_path=*) snapshot_path=${line#snapshot_path=} ;;
         snapshot_cooldown=*) snapshot_cooldown=${line#snapshot_cooldown=} ;;
@@ -68,6 +72,8 @@ case "$motion" in ''|0|1) ;; *) echo 'motion must be 0 or 1' >&2; exit 1 ;; esac
 [ -z "$motion_hold" ] || { printf '%s\n' "$motion_hold" | grep -Eq '^[0-9]{1,3}$' && [ "$motion_hold" -ge 1 ] && [ "$motion_hold" -le 600 ]; } || { echo 'bad motion_hold' >&2; exit 1; }
 [ -z "$motion_min_rate" ] || { printf '%s\n' "$motion_min_rate" | grep -Eq '^[0-9]{1,5}$' && [ "$motion_min_rate" -le 10000 ]; } || { echo 'bad motion_min_rate' >&2; exit 1; }
 [ -z "$motion_window" ] || { printf '%s\n' "$motion_window" | grep -Eq '^[0-9]{1,2}$' && [ "$motion_window" -ge 1 ] && [ "$motion_window" -le 10 ]; } || { echo 'bad motion_window' >&2; exit 1; }
+[ -z "$motion_settle" ] || { printf '%s\n' "$motion_settle" | grep -Eq '^[0-9]{1,3}$' && [ "$motion_settle" -le 600 ]; } || { echo 'bad motion_settle' >&2; exit 1; }
+[ -z "$wifi_reboot" ] || [ "$wifi_reboot" = 0 ] || { printf '%s\n' "$wifi_reboot" | grep -Eq '^[0-9]{2,4}$' && [ "$wifi_reboot" -ge 30 ] && [ "$wifi_reboot" -le 3600 ]; } || { echo 'bad wifi_reboot' >&2; exit 1; }
 case "$snapshot" in ''|0|1) ;; *) echo 'snapshot must be 0 or 1' >&2; exit 1 ;; esac
 [ "$snapshot" != 1 ] || [ "$motion" = 1 ] || { echo 'snapshot=1 needs motion=1' >&2; exit 1; }
 [ -z "$snapshot_path" ] || printf '%s\n' "$snapshot_path" | grep -Eq '^/[A-Za-z0-9/._?&=%-]{0,120}$' || { echo 'bad snapshot_path' >&2; exit 1; }

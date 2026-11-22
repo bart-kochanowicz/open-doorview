@@ -615,6 +615,40 @@ check 'a counter that goes down is a new baseline, not movement' test "$(motion_
 check_not 'the sanitizers report nothing with the rate threshold' grep -qE 'AddressSanitizer|runtime error' "$work/daemon-snap.log"
 kill_daemon
 
+echo '-- motion_settle: no motion counts for a while after a start or a Majestic restart'
+set_total 0
+start_snap_daemon 1 'motion_settle=6'
+before_on=$(motion_on)
+before_snap=$(snap_count)
+set_total 5
+sleep_s 2.5
+check 'a rise of the counter inside the settling time leaves Motion off' test "$(motion_on)" = "$before_on"
+check 'and publishes no picture' test "$(snap_count)" = "$before_snap"
+sleep_s 4.5
+set_total 50
+sleep_s 2.5
+check 'the same kind of rise after the settling time turns Motion on' test "$(motion_on)" -gt "$before_on"
+sleep_s 4.5
+before_on=$(motion_on)
+set_total 0
+sleep_s 1.5
+set_total 10
+sleep_s 2.5
+check 'a counter that goes down (Majestic restarted) starts the settling time again' test "$(motion_on)" = "$before_on"
+sleep_s 5
+set_total 100
+sleep_s 2.5
+check 'and the motion after it is reported' test "$(motion_on)" -gt "$before_on"
+check_not 'the sanitizers report nothing with motion_settle' grep -qE 'AddressSanitizer|runtime error' "$work/daemon-snap.log"
+kill_daemon
+set_total 0
+start_snap_daemon 1
+before_on=$(motion_on)
+set_total 5
+sleep_s 2.5
+check 'without motion_settle the first rise counts at once' test "$(motion_on)" -gt "$before_on"
+kill_daemon
+
 echo '-- snapshot_delay_ms: the picture is taken after the delay, not at the edge'
 set_total 0
 start_snap_daemon 1 'snapshot_delay_ms=2500'
@@ -842,6 +876,51 @@ check 'live_interval_ms 99 and 5001 are rejected' test "$(config_exit 'host=127.
 check 'a live_path with a space is rejected' test "$(config_exit 'host=127.0.0.1\nlive_path=/image.jpg HTTP/1.1\n')" = 2
 check 'a live_path with a query string is accepted' test "$(config_exit 'host=127.0.0.1\nlive_path=/image.jpg?width=320&height=180&qfactor=30\n')" = 3
 check 'a snapshot cooldown above 3600 is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsnapshot_cooldown=3601\n')" = 2
+
+
+echo '== wifi_reboot =='
+reboot_case() { # <broker port> <rx: frozen|moving> <wifi_reboot value> <seconds to wait> [restart the broker after this many seconds]; prints the daemon exit code, or "running"
+    echo 1000 > "$work/rx_packets"
+    { cat "$work/mqtt.conf"; printf 'port=%s\nrx_stats=%s/rx_packets\nwifi_reboot=%s\n' "$1" "$work" "$3"; } > "$work/mqtt-reboot.conf"
+    if [ "$2" = moving ]; then
+        ( n=1000; while :; do n=$((n + 1)); echo $n > "$work/rx_packets"; sleep 1; done ) &
+        mover=$!
+    fi
+    "$work/doorview-mqtt-asan" "$work/mqtt-reboot.conf" > "$work/daemon-reboot.log" 2>&1 &
+    reboot_pid=$!
+    begin=$(date +%s)
+    end=$((begin + $4))
+    restarted=0
+    while [ "$(date +%s)" -lt "$end" ]; do
+        kill -0 $reboot_pid 2> /dev/null || break
+        if [ -n "${5:-}" ] && [ "$restarted" = 0 ] && [ "$(date +%s)" -ge $((begin + $5)) ]; then
+            restarted=1
+            docker restart "$broker" > /dev/null 2>&1
+        fi
+        sleep 0.2
+    done
+    if kill -0 $reboot_pid 2> /dev/null; then
+        kill $reboot_pid 2> /dev/null
+        wait $reboot_pid 2> /dev/null
+        echo running
+    else
+        wait $reboot_pid
+        echo $?
+    fi
+    [ -z "${mover:-}" ] || { kill $mover 2> /dev/null; wait $mover 2> /dev/null; mover=; }
+}
+check 'a frozen packet counter with the broker unreachable restarts the camera' test "$(reboot_case 1 frozen 2 25)" = 86
+check 'and the log says why' grep -q 'wifi data path is dead' "$work/daemon-reboot.log"
+check 'it does not restart before four times the time has passed since the start' test "$(reboot_case 1 frozen 2 6)" = running
+check 'a moving packet counter does not restart it' test "$(reboot_case 1 moving 2 20)" = running
+check 'a reachable broker does not restart it, even with a frozen counter' test "$(reboot_case "$port" frozen 2 20)" = running
+check 'a short broker outage with a frozen counter does not restart it (the broker must be unreachable for the whole time)' test "$(reboot_case "$port" frozen 8 46 34)" = running
+check 'wifi_reboot=0 (the default) never restarts it' test "$(reboot_case 1 frozen 0 20)" = running
+check_not 'the sanitizers report nothing with wifi_reboot' grep -qE 'AddressSanitizer|runtime error' "$work/daemon-reboot.log"
+check 'wifi_reboot 0 and 3600 are accepted' test "$(config_exit 'host=127.0.0.1\nwifi_reboot=0\n')$(config_exit 'host=127.0.0.1\nwifi_reboot=3600\n')" = 33
+check 'wifi_reboot above 3600 and negative are rejected' test "$(config_exit 'host=127.0.0.1\nwifi_reboot=3601\n')$(config_exit 'host=127.0.0.1\nwifi_reboot=-1\n')" = 22
+check 'motion_settle 0 and 600 are accepted' test "$(config_exit 'host=127.0.0.1\nmotion_settle=0\n')$(config_exit 'host=127.0.0.1\nmotion_settle=600\n')" = 33
+check 'motion_settle above 600 and negative are rejected' test "$(config_exit 'host=127.0.0.1\nmotion_settle=601\n')$(config_exit 'host=127.0.0.1\nmotion_settle=-1\n')" = 22
 
 echo "passed=$passed failed=$failed"
 [ "$failed" = 0 ]

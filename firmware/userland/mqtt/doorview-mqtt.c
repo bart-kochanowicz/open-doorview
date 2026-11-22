@@ -43,11 +43,13 @@ struct config {
     char station_file[128];
     char reconnect_parameter[128];
     int wifi_watchdog;
+    int wifi_reboot;
     int motion;
     int motion_port;
     int motion_hold;
     int motion_min_rate;
     int motion_window;
+    int motion_settle;
     int snapshot;
     int snapshot_cooldown;
     int snapshot_delay_ms;
@@ -383,6 +385,10 @@ static int load_config(const char *path)
                 return -9;
         } else if (str_eq(line, "wifi_watchdog")) {
             cfg.wifi_watchdog = str_eq(value, "1");
+        } else if (str_eq(line, "wifi_reboot")) {
+            if (!parse_number(value, &number) || number < 0 || number > 3600)
+                return -21;
+            cfg.wifi_reboot = number;
         } else if (str_eq(line, "motion")) {
             cfg.motion = str_eq(value, "1");
         } else if (str_eq(line, "motion_port")) {
@@ -401,6 +407,10 @@ static int load_config(const char *path)
             if (!parse_number(value, &number) || number < 1 || number > 10)
                 return -16;
             cfg.motion_window = number;
+        } else if (str_eq(line, "motion_settle")) {
+            if (!parse_number(value, &number) || number < 0 || number > 600)
+                return -22;
+            cfg.motion_settle = number;
         } else if (str_eq(line, "snapshot_delay_ms")) {
             if (!parse_number(value, &number) || number < 0 || number > 5000)
                 return -17;
@@ -628,6 +638,7 @@ static u8 snapshot_buffer[SNAPSHOT_HEAD + SNAPSHOT_RESPONSE_MAX];
 static int snapshot_pending;
 static int have_snapshot;
 static u32 snapshot_deadline_ms;
+static u32 motion_settle_until_ms; /* no rise counts before this: motion_settle seconds after the start or a Majestic restart */
 static u32 snapshot_due_ms; /* not before this: the picture is taken snapshot_delay_ms after the motion edge */
 static u32 last_snapshot_ms;
 
@@ -924,13 +935,17 @@ static void update_motion(u32 now)
     now = sys_now_ms();
     if (motion_state < 0)
         motion_state = 0;
-    if (have_motion_total && total < motion_total)
+    if (have_motion_total && total < motion_total) {
         motion_sample_count = 0;
+        motion_settle_until_ms = now + (u32)cfg.motion_settle * 1000u;
+    }
     note_motion_sample(now, total);
     if (cfg.motion_min_rate > 0)
         rise = have_motion_total && motion_fast_enough(now, total);
     else
         rise = have_motion_total && total > motion_total;
+    if ((int)(now - motion_settle_until_ms) < 0)
+        rise = 0; /* the detector and the night switch settle for a while after a start */
     if (rise) {
         motion_until_ms = now + (u32)cfg.motion_hold * 1000u;
         motion_state = 1;
@@ -1295,6 +1310,7 @@ static u32 last_rx_value = 0xffffffffu;
 static u32 last_rx_change_ms;
 static u32 last_rx_sample_ms;
 static u32 last_reconnect_ms;
+static u32 daemon_started_ms;
 static int reconnect_done;
 
 static void request_wifi_reconnect(void)
@@ -1326,7 +1342,7 @@ static void watchdog(u32 now)
     int index;
     u32 value = 0;
 
-    if (!cfg.wifi_watchdog || now - last_rx_sample_ms < 5000u)
+    if ((!cfg.wifi_watchdog && !cfg.wifi_reboot) || now - last_rx_sample_ms < 5000u)
         return;
     last_rx_sample_ms = now;
     fd = sys_open_read(cfg.rx_stats, 0);
@@ -1342,8 +1358,17 @@ static void watchdog(u32 now)
         last_rx_value = value;
         last_rx_change_ms = now;
     }
+    /* A dead data path (observed: the received-packet counter stops while the broker is unreachable; the camera
+     * recovered every time by restarting) is restarted after wifi_reboot seconds, but never in the first four times that
+     * long after the start, so a path that is dead from boot on cannot make a tight restart loop. */
+    if (cfg.wifi_reboot && link != LINK_UP && now - last_up_ms > (u32)cfg.wifi_reboot * 1000u &&
+        now - last_rx_change_ms > (u32)cfg.wifi_reboot * 1000u &&
+        now - daemon_started_ms > (u32)cfg.wifi_reboot * 4000u) {
+        logmsg("wifi data path is dead, restarting the camera");
+        sys_reboot();
+    }
     /* Act only when the broker has been unreachable for a while AND no frame arrived at all. */
-    if (link != LINK_UP && now - last_up_ms > 180000u && now - last_rx_change_ms > 90000u &&
+    if (cfg.wifi_watchdog && link != LINK_UP && now - last_up_ms > 180000u && now - last_rx_change_ms > 90000u &&
         (!reconnect_done || now - last_reconnect_ms > 300000u)) {
         request_wifi_reconnect();
         reconnect_done = 1;
@@ -1513,6 +1538,8 @@ int app_main(const char *config_path)
         last_rx_change_ms = now;
         last_uptime_ms = now;
         last_motion_poll_ms = now;
+        motion_settle_until_ms = now + (u32)cfg.motion_settle * 1000u;
+        daemon_started_ms = now;
         next_attempt_ms = now;
     }
     logmsg("started");
