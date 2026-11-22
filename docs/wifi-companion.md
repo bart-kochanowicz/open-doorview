@@ -8,7 +8,7 @@ Evidence levels used below: **observed** (seen on the unit, logs or measurements
 
 | Item | Value | Evidence |
 |---|---|---|
-| Coprocessor | Hi3861-class MCU (working identification; the stock log names a "Hi3861" controller) | Stock UART log; the exact package was not checked |
+| Coprocessor | Hi3861L: its UART log prints SDK `Hi3861LV100R001C00SPC032` and firmware `3.2.23` | Coprocessor UART log; the package marking was not checked |
 | SDIO device | vendor `0x0296`, device `0x5347` on `mmc1`, function 1 | observed |
 | SDIO mode | **1-bit bus, 12 MHz**. Four-bit and 25 MHz attempts produced timeouts or lost the console | observed |
 | Wake-up lines | GPIO4_0 (SoC → MCU) and GPIO4_1 (MCU → SoC) on `120b4000.gpio_chip`, used as a bit-banged serial exchange at 12 µs per bit | observed |
@@ -39,6 +39,8 @@ Behaviour you should know about:
 - On the first drivers, ARP requests *from other hosts* did not always reach the camera (the gateway's did). The cause was not established; the interrupt-driven driver with the duplicate filter did not show it again, but cold-neighbour-cache behaviour from a second client was never systematically retested.
 
 ## Control frames from the MCU
+
+The complete message format and the commands of the factory firmware in both directions are in [the factory firmware](factory-firmware.md#the-coprocessor-link). This section lists what the shipped drivers handle.
 
 Frames with header `0x0034`, `data[32] == 0x8a` carry application messages; `data[33]` is the command.
 
@@ -71,7 +73,7 @@ With the polling driver the link repeatedly went silent: the frame counter froze
 
 ## Things that went wrong, so you can avoid them
 
-- **`8A:7E` with payload `01`** (the factory firmware's "enable MCU heartbeat" application command) was sent once from a test module. The UART went silent and the camera needed a press of its power button. It is not part of any shipped file. Do not send commands to the MCU that the shipped drivers do not send.
+- **`8A:7E` with payload `01`** (the factory firmware's "enable MCU heartbeat" application command) was sent once from a test module. The UART went silent and the camera needed a press of its power button. It is not part of any shipped file. Do not send commands to the MCU that the shipped drivers do not send. The likely explanation (a coprocessor watchdog that then switched the SoC off) and the full command list are in [the factory firmware](factory-firmware.md).
 - A **full SDIO reset** silenced the UART. A function disable/enable returned success with the FIFO still empty.
 - **Repeated station stop/start/connect sequences**, and `reconnect` on a dead data path, did not recover traffic and in one case ended with the Wi-Fi unusable until the camera lost **all power**. A soft `reboot` does not reset the MCU.
 - A 25 MHz clock gave a faster stream followed by an SDIO timeout and a reboot. Four-bit mode failed during initialisation.

@@ -12,12 +12,12 @@ Read this before trusting any part of the project.
 
 ## Things that are guesses
 
-- The battery capacity scale. 99 and 100 were observed; percent is assumed. After the last reboot (2026-11-20) the MCU reported `status=1, usb=0, capacity=100` (on battery) in every PowerInfo frame for at least 3 minutes while the camera was connected to USB (confirmed by the owner); in earlier boots the frames showed `status=2, usb=1`. The cause is unknown, so Home Assistant's External power can be wrong for a while after a boot.
+- The battery capacity scale. The coprocessor log suggests a percentage computed from the battery voltage (raw 458 empty, 475 low, 558 full; see [the factory firmware](factory-firmware.md#battery-scale-from-the-coprocessor-log)). On 2026-11-22 the value fell from 100 to 51 in 8 h 50 min on battery, read 13 for one minute with the screen on and 88 on the charger; so a reading under load or while charging is not the charge state. After the last reboot (2026-11-20) the MCU reported `status=1, usb=0, capacity=100` (on battery) in every PowerInfo frame for at least 3 minutes while the camera was connected to USB (confirmed by the owner); in earlier boots the frames showed `status=2, usb=1`. The cause is unknown, so Home Assistant's External power can be wrong for a while after a boot.
 - The meaning of power status 2 (charging versus full).
 - The panel controller and FPC pinout.
 - That the Hi3861 identification of the coprocessor is exact.
 - The cause of the early-boot resets. On 2026-11-20 **every one of three software reboots** (`reboot`) showed two resets before the third attempt reached the login prompt (three "System startup" banners, one "Welcome to OpenIPC" per capture; the resets come after "Starting mdev..." or earlier and before any Doorview hook). Whether a cold start (power removed) behaves the same was not tested. The camera was on a USB supply (ISDT Power 200H) throughout.
-- Whether a PIR sensor is present and usable (the factory configuration says `support_pir=1`; nothing was tested).
+- Whether the PIR sensor works. It belongs to the coprocessor; the factory commands to switch it on (`8a:78`, `8a:79`) and its alarm (`0x03`) are known from the factory firmware, but none was ever sent or seen (the coprocessor reported `isEnablePir:0`).
 
 ## Not implemented
 
@@ -30,8 +30,9 @@ Read this before trusting any part of the project.
 - DHCP, automatic Wi-Fi reconnect (an optional watchdog exists, off, and its recovery step is unproven), WPA3, open networks, 5 GHz, SSIDs or passphrases over 31 bytes.
 - Signal strength and access-point information (the factory command exists; it was never sent because commands to the MCU are risky).
 - TLS for MQTT.
+- Battery life: about 15 to 18 hours on battery (2026-11-22), against weeks with the factory firmware, which switches the SoC off between events. Sleep is not implemented; the commands are in [the factory firmware](factory-firmware.md#the-factory-power-cycle-from-the-factory-firmware).
 - Audio, the speaker and microphone, the PIR, the battery fuel gauge beyond the MCU's value. The IR-cut filter and IR LEDs work through Majestic's `nightMode` with GPIO 8 (see [night vision](night-vision.md)); motion detection in the dark works in night mode (IR LEDs on; rate threshold `motion_min_rate=20`) but the camera does not switch to night mode by itself in a dim room, where the noise is above the threshold; see the measurements there and the night snapshot path was not confirmed end to end.
-- Person detection. The SoC has one core, about 27 MB of RAM for Linux and no neural accelerator, so classification would have to run elsewhere with the camera only triggering and sending a frame.
+- Person detection. The factory firmware ran HiSilicon's `hi_ivp` detector on the camera after a PIR wake-up; OpenIPC has no such library. Under Linux the SoC has one core, about 27 MB of RAM and no neural accelerator, so classification would have to run elsewhere with the camera only triggering and sending a frame.
 - Over-the-air update, and anything that survives a re-flash.
 
 ## Gaps in what is recorded

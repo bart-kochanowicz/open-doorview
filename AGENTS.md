@@ -24,7 +24,7 @@ This repository holds the recovery procedures and the custom firmware layer for 
 | Path | What it is |
 |---|---|
 | `README.md`, `docs/install-guide.md` | what works and the end-to-end install |
-| `docs/` | procedures (`flash-layout.md`, `uart-pinout.md`, `openipc-flash.md`), hardware notes (`wifi-companion.md`, `lcd-and-button.md`, `mqtt-home-assistant.md`), `troubleshooting.md`, `known-limits.md`, `building.md` |
+| `docs/` | procedures (`flash-layout.md`, `uart-pinout.md`, `openipc-flash.md`), hardware notes (`wifi-companion.md`, `factory-firmware.md`, `lcd-and-button.md`, `mqtt-home-assistant.md`), `troubleshooting.md`, `known-limits.md`, `building.md` |
 | `firmware/stage1-wifi`, `stage2-lcd`, `stage3-mqtt` | installable packages: installer, rollback, payload, tests. The stages form a chain; later installers pin the exact files of earlier ones by SHA-256 |
 | `firmware/kernel/` | source of every kernel module, one directory per module |
 | `firmware/userland/` | LCD/button programs and the MQTT daemon |
@@ -56,11 +56,12 @@ Private material lives **outside** the repository (flash dumps, overlay backups,
 | Wi-Fi, RTSP/HTTP | works at 640×360, 5 fps (stage 1 and 2); the unit now runs a 1080p main stream for the snapshots, so live video does not play in real time |
 | LCD preview and front button | works (stage 2) |
 | MQTT / Home Assistant | stage 3 installed on the camera (2026-11-20) with the newest daemon (`motion=1`, `snapshot=1`, 1920 × 1080 pictures of 135 to 168 KB; phone notifications with the picture reported by the owner; a software reboot with this build recovered by itself): connects to the broker, publishes discovery and state, reconnects after reboots; hours of runtime, three reboots; the motion sensor works in hand-waving tests; the broker is separate infrastructure, not in this repository. 2026-11-22: build `66a866b4…` with the live view (works from the Home Assistant app, about 11 KB per picture, 1.9 pictures/s), `motion_settle` and `wifi_reboot`; three Wi-Fi data-path stalls overnight, see next work |
-| Battery monitoring | MCU power frames decoded; capacity scale and charge state unconfirmed |
+| Battery monitoring | MCU power frames decoded; the percentage follows the battery voltage (coprocessor log); charge state unconfirmed. Battery life about 15 to 18 h (2026-11-22) because the SoC never sleeps |
 | Reliable startup, recovery, update | startup works after a cold start; no automatic Wi-Fi reconnect; no OTA |
 
 ## Next work (in a sensible order)
 
+0. **Sleep like the factory firmware** (battery life is hours, not weeks). The coprocessor commands for standby, the PIR and the wake-up reason are in `docs/factory-firmware.md` ("Two ways forward", way A). First: make `syslink_poll` accept every wake-up reason (today it only accepts `poweron`, so a PIR or button wake-up would fail), measure the time from power-on to the first picture, then switch the PIR on while awake and look for `command=03`, and only then try `8a:77 07` + `9a:03` + the `8a:61` answer. Each of these is a new MCU command: warn the owner first; the recovery from a sleeping SoC is the power button. Never send `8a:7e` with a non-zero value. Person detection: on the home server from the snapshot (OpenIPC has no `hi_ivp`).
 1. Observe stage 3 and the motion sensor over days: Home Assistant values (battery, USB, button, motion), broker outages, reconnects, false alarms (tune `motionDetect` sensitivity and region of interest). Stages 1 and 2 set no default route; stage 3 adds it from `gateway=` in `mqtt.conf`. Next for the goal "notify when someone is at the door": the optional `snapshot=1` publishes a picture to the broker on the Motion edge (Home Assistant never reaches the camera). Do NOT create a second web account or open the camera's port 80 to Home Assistant: the web interface has no roles and every account is a root-equivalent administrator.
 2. Wi-Fi health: on 2026-11-22 the interrupt-driven driver stalled three times in 11.5 hours (`rx_packets` frozen, UniFi saw no disconnect); the camera recovered each time by restarting about ten minutes later (Majestic's watchdog). `wifi_reboot` in `mqtt.conf` does the same sooner and is installed, but has not yet been seen ending a real stall. Find the cause of the stall (driver, SDIO link or MCU; see `docs/wifi-companion.md`). The optional `wifi_watchdog` (a reconnect) is unproven and off.
 3. The cause of the early-boot resets (two before every successful software reboot so far).
