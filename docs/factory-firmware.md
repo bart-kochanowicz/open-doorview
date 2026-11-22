@@ -146,6 +146,28 @@ When the coprocessor powers the SoC on, the first exchange on the two wake-up GP
 
 **The coprocessor's own guard (observed in its UART log under OpenIPC):** about 70 s after its start it printed `mcu check soc alive: 1, syslink established:0, system reboot` and restarted the system, because the SoC had not brought up the link in time. Our drivers bring the link up well before that; the coprocessor UART has not been watched since, so this is not confirmed.
 
+## Waking the camera from the network (from the factory firmware)
+
+The factory firmware can be woken by its cloud while the SoC is off. Before standby, `HAL_WIFI_SetKeepAlive` (`0x40148e40`) and `HAL_WIFI_SetNetPattern` (`0x40148c74`) give the coprocessor two things:
+
+**`9a:30`, keep-alive servers (293 bytes):**
+
+| Offset | Size | Meaning |
+|---|---|---|
+| 0 | 1 | 1 = keep-alive on |
+| 1 | 1 | number of servers, 1 to 4 |
+| 2 | 1 | "wake line threshold": `servers / 2 + 1`; meaning not known |
+| 3 | 2 | interval, little endian (30 if the cloud gives none; assumed seconds) |
+| 5 + 72 × i | 1 | server *i* enabled |
+| 6 + 72 × i | 1 | length of its keep-alive packet, up to 64 |
+| 7 + 72 × i | 2 | server port |
+| 9 + 72 × i | 4 | server IPv4 address (as the factory firmware's address-to-text call reads it; byte order assumed network order) |
+| 13 + 72 × i | 64 | the keep-alive packet |
+
+**`9a:2c`, wake-up pattern (261 bytes):** byte 0 = 1, then four entries of 64 pattern bytes plus one length byte. The factory firmware writes the same pattern, taken from the cloud SDK, into all four entries.
+
+`9a:05` then starts the keep-alive, and `9a:07` (304 bytes) authenticates to the server, which the factory firmware does only for its own cloud. The coprocessor has its own TCP/IP stack (`tcpip_init` in its log). **Assumption:** it keeps the connection open while the SoC is off, sends the keep-alive packet at each interval, and wakes the SoC with the reason `wifi` when a received packet matches the pattern. If that holds, a small TCP server on the home network could replace the cloud: Home Assistant would ask it to send the pattern, and the camera would wake for a live view.
+
 ## Battery scale (from the coprocessor log)
 
 The coprocessor logs `capacity:<raw> min:458 lwo:475 percent:<n>` and, when the link comes up, `bCfg1 = 458`, `bCfg2 = 475`, `bCfg3 = 558`. The logged pairs fit `percent = (raw − 458) × 100 / (558 − 458)`, capped at 99 while charging (raw 521 → 63; raw 565 → 99). **Assumption:** the raw value follows the battery voltage (558 near full, 475 the low warning, 458 empty). This explains the 13 % reading under load and the 88 % reading on the charger.
@@ -170,7 +192,7 @@ The open questions:
 - The two early resets that every software reboot showed.
 - Whether the coprocessor behaves the same with our timing.
 
-A wake-up from Home Assistant would need our own keep-alive server instead of the cloud's: the formats of `0x2c` and `0x30` are not decoded yet.
+A wake-up from Home Assistant would need our own keep-alive server instead of the cloud's (formats above; untested).
 
 **B. The factory image without the cloud.** We would keep the RTOS, the quick start and `hi_ivp`, and replace the Tuya calls with a small client for our broker. The power cycle and the detector would then be the original ones. The obstacles:
 
@@ -182,6 +204,6 @@ A wake-up from Home Assistant would need our own keep-alive server instead of th
 ## Not established
 
 - The meaning of the PIR setting values above 0, and the sensitivity range.
-- The payloads of `0x65`, `0x7c`, `0x2c` and `0x30`.
+- The payloads of `0x65` and `0x7c`; the "wake line threshold" and the units of the keep-alive interval; whether the keep-alive works without the `9a:07` authentication.
 - Whether the coprocessor switches the SoC off after `9a:03` without the server keep-alive, and how long it waits for the `0x61` answer.
 - Whether the factory power-cycle order is the same on other coprocessor firmware versions (one unit, `3.2.23`).
