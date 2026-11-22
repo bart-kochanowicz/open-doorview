@@ -55,15 +55,15 @@ Private material lives **outside** the repository (flash dumps, overlay backups,
 | OpenIPC compatibility | confirmed on one unit (GK7202V300, Linux 4.9.37) |
 | Wi-Fi, RTSP/HTTP | works at 640×360, 5 fps (stage 1 and 2); the unit now runs a 1080p main stream for the snapshots, so live video does not play in real time |
 | LCD preview and front button | works (stage 2) |
-| MQTT / Home Assistant | stage 3 installed on the camera (2026-11-20) with the newest daemon (`motion=1`, `snapshot=1`, 1920 × 1080 pictures of 135 to 168 KB; phone notifications with the picture reported by the owner; a software reboot with this build recovered by itself): connects to the broker, publishes discovery and state, reconnects after reboots; hours of runtime, three reboots; the motion sensor works in hand-waving tests; the broker is separate infrastructure, not in this repository |
+| MQTT / Home Assistant | stage 3 installed on the camera (2026-11-20) with the newest daemon (`motion=1`, `snapshot=1`, 1920 × 1080 pictures of 135 to 168 KB; phone notifications with the picture reported by the owner; a software reboot with this build recovered by itself): connects to the broker, publishes discovery and state, reconnects after reboots; hours of runtime, three reboots; the motion sensor works in hand-waving tests; the broker is separate infrastructure, not in this repository. 2026-11-22: build `66a866b4…` with the live view (works from the Home Assistant app, about 11 KB per picture, 1.9 pictures/s), `motion_settle` and `wifi_reboot`; three Wi-Fi data-path stalls overnight, see next work |
 | Battery monitoring | MCU power frames decoded; capacity scale and charge state unconfirmed |
 | Reliable startup, recovery, update | startup works after a cold start; no automatic Wi-Fi reconnect; no OTA |
 
 ## Next work (in a sensible order)
 
 1. Observe stage 3 and the motion sensor over days: Home Assistant values (battery, USB, button, motion), broker outages, reconnects, false alarms (tune `motionDetect` sensitivity and region of interest). Stages 1 and 2 set no default route; stage 3 adds it from `gateway=` in `mqtt.conf`. Next for the goal "notify when someone is at the door": the optional `snapshot=1` publishes a picture to the broker on the Motion edge (Home Assistant never reaches the camera). Do NOT create a second web account or open the camera's port 80 to Home Assistant: the web interface has no roles and every account is a root-equivalent administrator.
-2. Wi-Fi health: understand the dead-data-path state, then decide on a reconnect or watchdog that is proven to recover (the optional `wifi_watchdog` is unproven and off).
-3. Long-run stability of the interrupt-driven driver (only about 100 minutes observed) and the cause of the early-boot resets (two before every successful software reboot so far).
+2. Wi-Fi health: on 2026-11-22 the interrupt-driven driver stalled three times in 11.5 hours (`rx_packets` frozen, UniFi saw no disconnect); the camera recovered each time by restarting about ten minutes later (Majestic's watchdog). `wifi_reboot` in `mqtt.conf` does the same sooner and is installed, but has not yet been seen ending a real stall. Find the cause of the stall (driver, SDIO link or MCU; see `docs/wifi-companion.md`). The optional `wifi_watchdog` (a reconnect) is unproven and off.
+3. The cause of the early-boot resets (two before every successful software reboot so far).
 4. Signal strength and access-point info (needs the RSSI query; warn first).
 5. Battery: confirm the capacity scale and the meaning of status 2 by observing a discharge and a full charge.
 6. PIR: check whether the sensor is usable (`support_pir=1` in the factory config).
