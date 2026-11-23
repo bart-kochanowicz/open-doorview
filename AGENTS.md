@@ -68,7 +68,7 @@ Private material lives **outside** the repository (flash dumps, overlay backups,
 4. Signal strength and access-point info (needs the RSSI query; warn first).
 5. Battery: confirm the capacity scale and the meaning of status 2 by observing a discharge and a full charge.
 6. PIR: check whether the sensor is usable (`support_pir=1` in the factory config).
-7. Person detection: the camera triggers and sends a frame, a server classifies, Home Assistant notifies (the SoC has one core, about 27 MB of RAM for Linux and no NPU).
+7. Person detection: the server side is deployed (a detector container in the Home Assistant pod of the homelab, `binary_sensor.front_door_person`, a silent "Person at the front door" update of the motion notification; see `docs/known-limits.md`). Open: collect real positives to tune the 50 % threshold, then decide whether to suppress notifications for motion without a person.
 8. Close the gaps in `docs/known-limits.md`: the unrecorded first-flash method, the lost source of the shipped `syslink_bg.ko`, non-reproducible LCD binaries, a licence file.
 
 ## Evidence Checklist
