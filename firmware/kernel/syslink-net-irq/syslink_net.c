@@ -231,6 +231,202 @@ unlock:
     return err;
 }
 
+/*
+ * One command for the coprocessor on the application channel (0x8a), written as six
+ * hex digits: the command and its u16 payload. Only the PIR switch (0x78: 0 or 1)
+ * and the PIR sensitivity (0x79: the level, 1 to 3, in the high byte) are accepted;
+ * every other command stays refused until it has been tested on its own.
+ */
+#define MCU_COMMAND_SIZE 3
+
+static DEFINE_MUTEX(mcu_lock);
+static u8 mcu_command[MCU_COMMAND_SIZE];
+static bool mcu_pending;
+
+static int mcu_set(const char *value, const struct kernel_param *param)
+{
+    u8 command[MCU_COMMAND_SIZE];
+    size_t len = strlen(value);
+    int err = 0;
+
+    if (len && value[len - 1] == '\n')
+        len--;
+    if (len != sizeof(command) * 2 || hex2bin(command, value, sizeof(command)))
+        return -EINVAL;
+    if (command[0] == 0x78) {
+        if (command[1] > 1 || command[2])
+            return -EINVAL;
+    } else if (command[0] == 0x79) {
+        if (command[1] || command[2] < 1 || command[2] > 3)
+            return -EINVAL;
+    } else {
+        return -EPERM;
+    }
+
+    mutex_lock(&mcu_lock);
+    if (mcu_pending) {
+        err = -EBUSY;
+    } else {
+        memcpy(mcu_command, command, sizeof(command));
+        mcu_pending = true;
+    }
+    mutex_unlock(&mcu_lock);
+    return err;
+}
+
+static const struct kernel_param_ops mcu_ops = { .set = mcu_set };
+module_param_cb(mcu, &mcu_ops, NULL, 0200);
+
+static int send_mcu_request(struct sdio_func *func, u8 *data)
+{
+    static const u8 header[40] = { [0] = 0x31, [16] = 0x01,
+        [20] = 0x02, [21] = 0xb0, [22] = 0xa0, [23] = 0x20,
+        [32] = 0x8a, [34] = 0x01, [35] = 0x01 };
+    size_t length = sizeof(header) + 2;
+    u8 command[MCU_COMMAND_SIZE];
+    int err;
+
+    mutex_lock(&mcu_lock);
+    if (!mcu_pending) {
+        mutex_unlock(&mcu_lock);
+        return 0;
+    }
+    memcpy(command, mcu_command, sizeof(command));
+    mutex_unlock(&mcu_lock);
+
+    memcpy(data, header, sizeof(header));
+    data[28] = data[38] = 0x0a;
+    data[33] = command[0];
+    data[40] = command[1];
+    data[41] = command[2];
+    err = sdio_writesb(func, 0, data, length);
+    if (!err)
+        pr_info("doorview: mcu command=%02x payload=%02x%02x sent\n", command[0], command[1], command[2]);
+
+    /* A failed write is not repeated: the owner asked once and reads the log. */
+    mutex_lock(&mcu_lock);
+    mcu_pending = false;
+    mutex_unlock(&mcu_lock);
+    return err;
+}
+
+/*
+ * The factory standby, step by step (docs/factory-firmware.md): 8a:77 07, then 9a:03,
+ * then the answer 8a:61 01 00 00 00 when the coprocessor asks with 0xa0. Writing 1 to
+ * "standby" starts it once; the coprocessor then switches the SoC off, so sync first.
+ */
+#define STANDBY_STATE_DELAY_MS 200
+#define STANDBY_ASK_WAIT_MS 15000
+
+enum standby_step {
+    STANDBY_IDLE,
+    STANDBY_STATE,
+    STANDBY_NOTICE,
+    STANDBY_WAIT,
+    STANDBY_ANSWER,
+};
+static DEFINE_MUTEX(standby_lock);
+static enum standby_step standby_step;
+static unsigned long standby_after;
+
+static int standby_set(const char *value, const struct kernel_param *param)
+{
+    int err = 0;
+
+    if (strcmp(value, "1") && strcmp(value, "1\n"))
+        return -EINVAL;
+    mutex_lock(&standby_lock);
+    if (standby_step != STANDBY_IDLE) {
+        err = -EBUSY;
+    } else {
+        standby_step = STANDBY_STATE;
+        standby_after = jiffies;
+    }
+    mutex_unlock(&standby_lock);
+    return err;
+}
+
+static const struct kernel_param_ops standby_ops = { .set = standby_set };
+module_param_cb(standby, &standby_ops, NULL, 0200);
+
+/* Called for every message that the coprocessor sends on the application channel. */
+static void standby_saw(u8 command)
+{
+    mutex_lock(&standby_lock);
+    if (command == 0xa0 && standby_step == STANDBY_WAIT)
+        standby_step = STANDBY_ANSWER;
+    mutex_unlock(&standby_lock);
+}
+
+static int send_standby_request(struct sdio_func *func, u8 *data)
+{
+    static const u8 app[40] = { [0] = 0x31, [16] = 0x01,
+        [20] = 0x02, [21] = 0xb0, [22] = 0xa0, [23] = 0x20,
+        [32] = 0x8a, [34] = 0x01, [35] = 0x01 };
+    static const u8 wifi[40] = { [0] = 0x31, [16] = 0x01,
+        [20] = 0x03, [21] = 0xb0, [22] = 0xa0, [23] = 0x20,
+        [32] = 0x9a, [34] = 0x01, [35] = 0x01 };
+    size_t length = 0;
+    int err = 0;
+
+    mutex_lock(&standby_lock);
+    if (standby_step == STANDBY_IDLE)
+        goto unlock;
+    if (standby_step == STANDBY_WAIT) {
+        if (time_after_eq(jiffies, standby_after)) {
+            pr_warn("doorview: standby: the coprocessor did not ask (0xa0), giving up\n");
+            standby_step = STANDBY_IDLE;
+        }
+        goto unlock;
+    }
+    /* The answer is sent at once: the coprocessor waits only a few seconds for it. */
+    if (standby_step != STANDBY_ANSWER && time_before(jiffies, standby_after))
+        goto unlock;
+    switch (standby_step) {
+    case STANDBY_STATE:
+        memcpy(data, app, sizeof(app));
+        data[28] = data[38] = 0x09;
+        data[33] = 0x77;
+        data[40] = 0x07;
+        length = sizeof(app) + 1;
+        break;
+    case STANDBY_NOTICE:
+        memcpy(data, wifi, sizeof(wifi));
+        data[28] = data[38] = 0x08;
+        data[33] = 0x03;
+        length = sizeof(wifi);
+        break;
+    case STANDBY_ANSWER:
+        memcpy(data, app, sizeof(app));
+        data[28] = data[38] = 0x0c;
+        data[33] = 0x61;
+        data[40] = 0x01;
+        length = sizeof(app) + 4;
+        break;
+    default:
+        goto unlock;
+    }
+    err = sdio_writesb(func, 0, data, length);
+    if (err) {
+        standby_step = STANDBY_IDLE;
+        goto unlock;
+    }
+    pr_info("doorview: standby: %c%c:%02x sent\n", data[32] >> 4 == 8 ? '8' : '9', 'a', data[33]);
+    if (standby_step == STANDBY_STATE) {
+        standby_step = STANDBY_NOTICE;
+        standby_after = jiffies + msecs_to_jiffies(STANDBY_STATE_DELAY_MS);
+    } else if (standby_step == STANDBY_NOTICE) {
+        standby_step = STANDBY_WAIT;
+        standby_after = jiffies + msecs_to_jiffies(STANDBY_ASK_WAIT_MS);
+    } else {
+        standby_step = STANDBY_IDLE;
+    }
+
+unlock:
+    mutex_unlock(&standby_lock);
+    return err;
+}
+
 static netdev_tx_t doorview_xmit(struct sk_buff *skb, struct net_device *dev)
 {
     __be16 ethertype;
@@ -348,6 +544,7 @@ static int syslink_worker(void *arg)
                 unsigned int length = data[38] | (data[39] << 8);
 
                 pr_info("doorview_control: command=%02x length=%u\n", data[33], length);
+                standby_saw(data[33]);
                 /* Separate prefix: the button listener only matches the line above. */
                 if (data[33] != 0xa5 && count > 40) {
                     unsigned int shown = min_t(unsigned int, count - 40, 32);
@@ -435,6 +632,10 @@ transmit:
         if (acknowledged & (1u << 3)) {
             stage = 5;
             err = send_station_request(func, data);
+            if (!err)
+                err = send_mcu_request(func, data);
+            if (!err)
+                err = send_standby_request(func, data);
             if (err) {
                 sdio_release_host(func);
                 break;
