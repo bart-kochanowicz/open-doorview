@@ -231,6 +231,85 @@ unlock:
     return err;
 }
 
+/*
+ * One command for the coprocessor on the application channel (0x8a), written as six
+ * hex digits: the command and its u16 payload. Only the PIR switch (0x78: 0 or 1)
+ * and the PIR sensitivity (0x79: the level, 1 to 3, in the high byte) are accepted;
+ * every other command stays refused until it has been tested on its own.
+ */
+#define MCU_COMMAND_SIZE 3
+
+static DEFINE_MUTEX(mcu_lock);
+static u8 mcu_command[MCU_COMMAND_SIZE];
+static bool mcu_pending;
+
+static int mcu_set(const char *value, const struct kernel_param *param)
+{
+    u8 command[MCU_COMMAND_SIZE];
+    size_t len = strlen(value);
+    int err = 0;
+
+    if (len && value[len - 1] == '\n')
+        len--;
+    if (len != sizeof(command) * 2 || hex2bin(command, value, sizeof(command)))
+        return -EINVAL;
+    if (command[0] == 0x78) {
+        if (command[1] > 1 || command[2])
+            return -EINVAL;
+    } else if (command[0] == 0x79) {
+        if (command[1] || command[2] < 1 || command[2] > 3)
+            return -EINVAL;
+    } else {
+        return -EPERM;
+    }
+
+    mutex_lock(&mcu_lock);
+    if (mcu_pending) {
+        err = -EBUSY;
+    } else {
+        memcpy(mcu_command, command, sizeof(command));
+        mcu_pending = true;
+    }
+    mutex_unlock(&mcu_lock);
+    return err;
+}
+
+static const struct kernel_param_ops mcu_ops = { .set = mcu_set };
+module_param_cb(mcu, &mcu_ops, NULL, 0200);
+
+static int send_mcu_request(struct sdio_func *func, u8 *data)
+{
+    static const u8 header[40] = { [0] = 0x31, [16] = 0x01,
+        [20] = 0x02, [21] = 0xb0, [22] = 0xa0, [23] = 0x20,
+        [32] = 0x8a, [34] = 0x01, [35] = 0x01 };
+    size_t length = sizeof(header) + 2;
+    u8 command[MCU_COMMAND_SIZE];
+    int err;
+
+    mutex_lock(&mcu_lock);
+    if (!mcu_pending) {
+        mutex_unlock(&mcu_lock);
+        return 0;
+    }
+    memcpy(command, mcu_command, sizeof(command));
+    mutex_unlock(&mcu_lock);
+
+    memcpy(data, header, sizeof(header));
+    data[28] = data[38] = 0x0a;
+    data[33] = command[0];
+    data[40] = command[1];
+    data[41] = command[2];
+    err = sdio_writesb(func, 0, data, length);
+    if (!err)
+        pr_info("doorview: mcu command=%02x payload=%02x%02x sent\n", command[0], command[1], command[2]);
+
+    /* A failed write is not repeated: the owner asked once and reads the log. */
+    mutex_lock(&mcu_lock);
+    mcu_pending = false;
+    mutex_unlock(&mcu_lock);
+    return err;
+}
+
 static netdev_tx_t doorview_xmit(struct sk_buff *skb, struct net_device *dev)
 {
     __be16 ethertype;
@@ -435,6 +514,8 @@ transmit:
         if (acknowledged & (1u << 3)) {
             stage = 5;
             err = send_station_request(func, data);
+            if (!err)
+                err = send_mcu_request(func, data);
             if (err) {
                 sdio_release_host(func);
                 break;
