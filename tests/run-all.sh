@@ -23,6 +23,8 @@ run firmware/stage8-fast-boot/tests/run-tests.sh
 run firmware/stage9-lean/tests/run-tests.sh
 run firmware/stage10-early-daemon/tests/run-tests.sh
 run firmware/stage11-wake-preview/tests/run-tests.sh
+run firmware/stage12-pir-high/tests/run-tests.sh
+run firmware/stage13-night-wait/tests/run-tests.sh
 run tools/tests/run-tests.sh
 if command -v docker > /dev/null 2>&1 && docker info > /dev/null 2>&1; then
     run firmware/userland/mqtt/tests/run-tests.sh

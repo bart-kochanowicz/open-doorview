@@ -12,8 +12,7 @@
  *   earlier run) and gives it to the sensor library as the initial exposure, so that the automatic exposure starts
  *   near the right value instead of from its default.
  *
- * The vendor libraries are loaded with dlopen(RTLD_LAZY | RTLD_GLOBAL), as Majestic and divinus do: they leave
- * symbols to each other (and some to libraries this program never uses) that musl only resolves lazily there.
+ * Run it as LD_LIBRARY_PATH=/etc/doorview-lcd ./first-snap (see the comment above "libraries" below).
  */
 #include <asm/unistd.h>
 #include <linux/ioctl.h>
@@ -54,8 +53,6 @@ extern void *dlsym(void *handle, const char *name);
 extern char *dlerror(void);
 extern int pthread_create(unsigned long *thread, const void *attributes, void *(*start)(void *), void *argument);
 extern int pthread_join(unsigned long thread, void **result);
-extern int dprintf(int fd, const char *format, ...);
-extern int snprintf(char *buffer, size_t size, const char *format, ...);
 extern void *memset(void *, int, size_t);
 extern void *memcpy(void *, const void *, size_t);
 extern long syscall(long number, ...);
@@ -95,10 +92,112 @@ static unsigned long boot_ms(void)
 
 static unsigned long started_ms;
 
-static void step(const char *name, long result)
+/* Output through write(2) only: once the vendor system is initialised, musl's stdio crashes (a NULL dereference in
+ * vfprintf, observed on the unit; vo-live-30 avoids stdio too). */
+struct line {
+    char text[320];
+    unsigned int length;
+};
+
+static void add_text(struct line *line, const char *text)
+{
+    while (*text && line->length < sizeof(line->text) - 1)
+        line->text[line->length++] = *text++;
+}
+
+static void add_number(struct line *line, unsigned long value, unsigned int base, unsigned int width)
+{
+    char digits[12];
+    unsigned int count = 0;
+    do {
+        digits[count++] = "0123456789abcdef"[value % base];
+        value /= base;
+    } while (value && count < sizeof(digits));
+    while (count < width && count < sizeof(digits))
+        digits[count++] = '0';
+    while (count && line->length < sizeof(line->text) - 1)
+        line->text[line->length++] = digits[--count];
+}
+
+static void add_signed(struct line *line, long value)
+{
+    if (value < 0) {
+        add_text(line, "-");
+        value = -value;
+    }
+    add_number(line, (unsigned long)value, 10, 0);
+}
+
+static void add_field(struct line *line, const char *name, unsigned long value)
+{
+    add_text(line, name);
+    add_number(line, value, 10, 0);
+}
+
+static void finish(struct line *line, int fd)
+{
+    line->text[line->length++] = '\n';
+    syscall(__NR_write, fd, line->text, line->length);
+}
+
+/* The vendor libraries print through these; Majestic defines printf and puts for them too. Only the format text is
+ * written, without its arguments. */
+static void write_text(int fd, const char *text)
+{
+    size_t length = 0;
+    while (text[length])
+        ++length;
+    syscall(__NR_write, fd, text, length);
+}
+
+int printf(const char *format, ...)
+{
+    write_text(1, format);
+    return 0;
+}
+
+int fprintf(FILE *file, const char *format, ...)
+{
+    (void)file;
+    write_text(2, format);
+    return 0;
+}
+
+int puts(const char *text)
+{
+    write_text(1, text);
+    write_text(1, "\n");
+    return 0;
+}
+
+static void say(int fd, const char *first, const char *second)
+{
+    struct line line = {.length = 0};
+    add_text(&line, first);
+    add_text(&line, second);
+    finish(&line, fd);
+}
+
+/* "<seconds since boot>.<ms> +<ms since start>ms " */
+static void add_time(struct line *line)
 {
     unsigned long now = boot_ms();
-    dprintf(1, "%lu.%03lu +%lums %s: %#lx\n", now / 1000, now % 1000, now - started_ms, name, (unsigned long)result);
+    add_number(line, now / 1000, 10, 0);
+    add_text(line, ".");
+    add_number(line, now % 1000, 10, 3);
+    add_text(line, " +");
+    add_number(line, now - started_ms, 10, 0);
+    add_text(line, "ms ");
+}
+
+static void step(const char *name, long result)
+{
+    struct line line = {.length = 0};
+    add_time(&line);
+    add_text(&line, name);
+    add_text(&line, ": 0x");
+    add_number(&line, (unsigned long)result, 16, 0);
+    finish(&line, 1);
 }
 
 /* ---- the vendor functions, looked up by name ---- */
@@ -155,11 +254,12 @@ static void step(const char *name, long result)
 #define DECLARE(type, name, arguments) static type(*p_##name) arguments;
 VENDOR_FUNCTIONS(DECLARE)
 
-/* In the order Majestic's own dlopen calls need them: each library may use symbols of the ones before it. */
-static const char *const libraries[] = {
-    "libsecurec.so", "libgk_api.so", "libgk_isp.so", "libgk_ae.so", "libgk_awb.so",
-    "libdehaze.so", "libdrc.so", "libldci.so", SENSOR_LIBRARY,
-};
+/* Only the sensor library is opened here. The other vendor libraries are linked as load-time dependencies, as
+ * Majestic links them: they need each other in a cycle (libgk_isp and dehaze/drc/ldci) and through data
+ * relocations, which musl resolves only when every library is loaded at once. Three uClibc symbols they use
+ * (__ctype_b, __fgetc_unlocked, _stdlib_mb_cur_max) come from the compatibility library of stage 2, so the
+ * program runs with LD_LIBRARY_PATH=/etc/doorview-lcd. */
+static const char *const libraries[] = {SENSOR_LIBRARY};
 
 static void *last_library;
 
@@ -167,13 +267,13 @@ static int load_vendor(void)
 {
     for (size_t i = 0; i < sizeof(libraries) / sizeof(libraries[0]); ++i) {
         if (!(last_library = dlopen(libraries[i], RTLD_LAZY | RTLD_GLOBAL))) {
-            dprintf(2, "dlopen %s: %s\n", libraries[i], dlerror());
+            say(2, "dlopen failed: ", dlerror());
             return 1;
         }
     }
 #define LOOKUP(type, name, arguments) \
     if (!(p_##name = (type(*) arguments)dlsym(NULL, #name))) { \
-        dprintf(2, "missing %s\n", #name); \
+        say(2, "missing ", #name); \
         return 1; \
     }
     VENDOR_FUNCTIONS(LOOKUP)
@@ -516,18 +616,32 @@ static void print_exposure(const char *label)
 {
     if (p_GK_API_ISP_QueryExposureInfo(VI_PIPE_ID, &exposure))
         return;
-    dprintf(1, "  %s: luma %u, histogram error %d, exposure %u (time %u, again %u, dgain %u, ispdgain %u), iso %u, "
-               "fps %u, stable after %u\n",
-            label, exposure.u8AveLum, exposure.s16HistError, exposure.u32Exposure, exposure.u32ExpTime,
-            exposure.u32AGain, exposure.u32DGain, exposure.u32ISPDGain, exposure.u32ISO, exposure.u32Fps,
-            exposure.u32FirstStableTime);
+    struct line line = {.length = 0};
+    add_text(&line, "  ");
+    add_text(&line, label);
+    add_field(&line, ": luma ", exposure.u8AveLum);
+    add_text(&line, ", histogram error ");
+    add_signed(&line, exposure.s16HistError);
+    add_field(&line, ", exposure ", exposure.u32Exposure);
+    add_field(&line, " (time ", exposure.u32ExpTime);
+    add_field(&line, ", again ", exposure.u32AGain);
+    add_field(&line, ", dgain ", exposure.u32DGain);
+    add_field(&line, ", ispdgain ", exposure.u32ISPDGain);
+    add_field(&line, "), iso ", exposure.u32ISO);
+    add_field(&line, ", fps ", exposure.u32Fps);
+    add_field(&line, ", stable after ", exposure.u32FirstStableTime);
+    finish(&line, 1);
 }
 
 static int write_picture(int index, VENC_STREAM_S *stream)
 {
-    char path[160];
-    snprintf(path, sizeof(path), "%s-%d.jpg", prefix, index);
-    int fd = (int)syscall(__NR_open, path, O_WRONLY_CREAT_TRUNC, 0600);
+    struct line path = {.length = 0};
+    add_text(&path, prefix);
+    add_text(&path, "-");
+    add_number(&path, (unsigned long)index, 10, 0);
+    add_text(&path, ".jpg");
+    path.text[path.length] = 0;
+    int fd = (int)syscall(__NR_open, path.text, O_WRONLY_CREAT_TRUNC, 0600);
     if (fd < 0)
         return 1;
     unsigned long bytes = 0;
@@ -541,9 +655,13 @@ static int write_picture(int index, VENC_STREAM_S *stream)
         bytes += length;
     }
     syscall(__NR_close, fd);
-    unsigned long now = boot_ms();
-    dprintf(1, "%lu.%03lu +%lums picture %d: %lu bytes in %s\n", now / 1000, now % 1000, now - started_ms, index, bytes,
-            path);
+    struct line line = {.length = 0};
+    add_time(&line);
+    add_field(&line, "picture ", (unsigned long)index);
+    add_field(&line, ": ", bytes);
+    add_text(&line, " bytes in ");
+    add_text(&line, path.text);
+    finish(&line, 1);
     return 0;
 }
 
@@ -586,8 +704,15 @@ static int capture(void)
         }
     }
     /* The line for -e on the next run. */
-    dprintf(1, "state: %u %u %u %u %u %u %u\n", exposure.u32ExpTime, exposure.u32AGain, exposure.u32DGain,
-            exposure.u32ISPDGain, exposure.u32Exposure, exposure.u32LinesPer500ms, exposure.u32ISO);
+    struct line line = {.length = 0};
+    add_field(&line, "state: ", exposure.u32ExpTime);
+    add_field(&line, " ", exposure.u32AGain);
+    add_field(&line, " ", exposure.u32DGain);
+    add_field(&line, " ", exposure.u32ISPDGain);
+    add_field(&line, " ", exposure.u32Exposure);
+    add_field(&line, " ", exposure.u32LinesPer500ms);
+    add_field(&line, " ", exposure.u32ISO);
+    finish(&line, 1);
     return 0;
 }
 
@@ -680,15 +805,15 @@ static int main(int count, char **arguments, char **environment)
     (void)environment;
     started_ms = boot_ms();
     if (parse_arguments(count, arguments)) {
-        dprintf(2, "usage: first-snap [-n pictures] [-w width] [-h height] [-q quality] [-f fps] [-o prefix] "
-                   "[-e exposure-file]\n");
+        say(2, "usage: first-snap [-n pictures] [-w width] [-h height] [-q quality] [-f fps] [-o prefix] ",
+            "[-e exposure-file]");
         return 2;
     }
     step("start", 0);
     if (load_vendor())
         return 1;
     if (!(sensor = (ISP_SNS_OBJ_S *)dlsym(last_library, SENSOR_OBJECT))) {
-        dprintf(2, "missing %s\n", SENSOR_OBJECT);
+        say(2, "missing ", SENSOR_OBJECT);
         return 1;
     }
     step("libraries", 0);

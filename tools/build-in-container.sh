@@ -47,9 +47,20 @@ build_module syslink-net-poll syslink_net syslink_net.ko
 build_module syslink-net-irq-stage2 syslink_net syslink_net_irq-stage2.ko
 build_module syslink-net-irq-stage3 syslink_net syslink_net_irq-stage3.ko
 build_module syslink-net-irq-stage4 syslink_net syslink_net_irq-stage4.ko
+build_module syslink-net-irq-stage6 syslink_net syslink_net_irq-stage6.ko
 build_module syslink-net-irq syslink_net syslink_net_irq.ko
 
 echo "== camera binaries =="
+stage12_mqtt=$repo/firmware/userland/mqtt-stage12
+${cross}gcc -Os -mfloat-abi=soft -march=armv7-a -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector \
+    -nostdlib -static -Wl,--gc-sections -Wl,--build-id -o "$out/userland/doorview-mqtt-stage12" "$stage12_mqtt/doorview-mqtt.c" "$stage12_mqtt/sys-arm.c"
+${cross}strip "$out/userland/doorview-mqtt-stage12"
+
+stage10_mqtt=$repo/firmware/userland/mqtt-stage10
+${cross}gcc -Os -mfloat-abi=soft -march=armv7-a -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector \
+    -nostdlib -static -Wl,--gc-sections -Wl,--build-id -o "$out/userland/doorview-mqtt-stage10" "$stage10_mqtt/doorview-mqtt.c" "$stage10_mqtt/sys-arm.c"
+${cross}strip "$out/userland/doorview-mqtt-stage10"
+
 stage7_mqtt=$repo/firmware/userland/mqtt-stage7
 ${cross}gcc -Os -mfloat-abi=soft -march=armv7-a -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector \
     -nostdlib -static -Wl,--gc-sections -Wl,--build-id -o "$out/userland/doorview-mqtt-stage7" "$stage7_mqtt/doorview-mqtt.c" "$stage7_mqtt/sys-arm.c"
@@ -96,11 +107,23 @@ if [ -f "$repo/build/rootfs-libs/libgk_api.so" ] && [ -f "$repo/build/rootfs-lib
         -I"$src/openhisilicon/include" -Wl,--allow-shlib-undefined -Wl,--dynamic-linker=/lib/ld-musl-arm.so.1 -Wl,--build-id \
         -o "$out/userland/vo-live-30" "$lcd/vo-live-30.c" -L"$repo/build/rootfs-libs" -l:libgk_api.so -l:libc.so
     ${cross}strip "$out/userland/vo-live-30"
-    # A measurement prototype that has not run on a camera; it loads the vendor libraries itself with dlopen.
-    ${cross}gcc -Os -mfloat-abi=soft -march=armv7-a -ffreestanding -fno-stack-protector -nostdlib \
-        -I"$src/openhisilicon/include" -Wl,--allow-shlib-undefined -Wl,--dynamic-linker=/lib/ld-musl-arm.so.1 -Wl,--build-id \
-        -o "$out/userland/first-snap" "$repo/firmware/userland/capture/first-snap.c" -L"$repo/build/rootfs-libs" -l:libc.so -lgcc
-    ${cross}strip "$out/userland/first-snap"
+    # A measurement prototype (docs/first-snap.md). It links the vendor libraries as load-time dependencies, as
+    # Majestic does, and the uClibc compatibility library of stage 2.
+    vendor_libs="libgk_api.so libgk_ae.so libgk_awb.so libgk_isp.so libupvqe.so libdnvqe.so libvoice_engine.so libldci.so libdehaze.so libdrc.so libir_auto.so libsecurec.so"
+    have_vendor=yes
+    for lib in $vendor_libs; do [ -f "$repo/build/rootfs-libs/$lib" ] || have_vendor=no; done
+    if [ "$have_vendor" = yes ]; then
+        links=
+        for lib in $vendor_libs; do links="$links -l:$lib"; done
+        ${cross}gcc -Os -mfloat-abi=soft -march=armv7-a -ffreestanding -fno-stack-protector -nostdlib \
+            -I"$src/openhisilicon/include" -Wl,--allow-shlib-undefined -Wl,--no-as-needed \
+            -Wl,--dynamic-linker=/lib/ld-musl-arm.so.1 -Wl,--build-id -o "$out/userland/first-snap" \
+            "$repo/firmware/userland/capture/first-snap.c" -L"$repo/firmware/stage2-lcd/payload/etc/doorview-lcd" \
+            -L"$repo/build/rootfs-libs" -l:libuclibc-compat.so $links -l:libc.so -lgcc
+        ${cross}strip "$out/userland/first-snap"
+    else
+        echo "first-snap skipped: tools/extract-rootfs-libs.sh did not extract the vendor libraries"
+    fi
 else
     echo "vo-live-30 skipped: pass --rootfs-libs DIR (libc.so and libgk_api.so from the OpenIPC root filesystem)"
 fi

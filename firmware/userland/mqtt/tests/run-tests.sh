@@ -338,6 +338,17 @@ def serve(conn):
         if line.startswith(b'GET /image.jpg'):
             serve_image(conn, line)
             return
+        if line.startswith(b'GET /metrics/night'):
+            # The file night holds "enabled gain pending"; no file is a Majestic without these metrics.
+            values = read('night', '').split()
+            if len(values) != 3:
+                conn.sendall(b'HTTP/1.0 404 Not Found\r\nContent-Length: 0\r\n\r\n')
+                return
+            body = ('# HELP night_enabled Is night mode enabled\n# TYPE night_enabled gauge\nnight_enabled %s\n'
+                    '# TYPE night_auto_gain_milli gauge\nnight_auto_gain_milli %s\n'
+                    '# TYPE night_auto_pending gauge\nnight_auto_pending %s\n') % tuple(values)
+            conn.sendall(b'HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\n' + body.encode())
+            return
         mode, total = read('mode', 'normal'), read('total', '0')
         open(os.path.join(state, 'hits'), 'a').write('x\n')
         if mode == 'auth':
@@ -1021,9 +1032,9 @@ check_not 'and the PIR is not switched on by the daemon' test -s "$work/mcu"
 kill_daemon
 
 echo '-- the sleep writes the timer, the sensitivity and the PIR again'
-start_pir_daemon 'sleep_after=10\nsleep_usb=1\npir_sensitivity=3'
+start_pir_daemon 'sleep_after=10\nsleep_usb=1\npir_sensitivity=5'
 check 'it sleeps after the idle time' wait_sleep 25
-check 'the writes are: sensitivity, PIR on (start), then timer off, sensitivity, PIR on (sleep)' test "$(cat "$work/mcu")" = "$(printf '790003\n780100\n7b00000000\n790003\n780100')"
+check 'the writes are: sensitivity, PIR on (start), then timer off, sensitivity, PIR on (sleep)' test "$(cat "$work/mcu")" = "$(printf '790005\n780100\n7b00000000\n790005\n780100')"
 kill_daemon
 
 echo '-- a PIR wake-up: the picture first, then the PIR setup, even while Majestic is still starting'
@@ -1043,6 +1054,44 @@ check 'Majestic not answering is logged once, not at every try' test "$(grep -c 
 check 'then the PIR is set up' wait_for "$work/daemon-pir.log" 'PIR is on' 5
 check 'after the picture, not before' sh -c "awk '/snapshot published/ && !p {p=NR} /PIR is on/ && !q {q=NR} END {exit !(p && q && p < q)}' '$work/daemon-pir.log'"
 check 'the setup writes the sensitivity and the PIR switch' test "$(cat "$work/mcu")" = "$(printf '790002\n780100')"
+kill_daemon
+
+echo '-- night_wait_ms: in the dark the wake-up picture waits for night mode'
+set_night() { printf '%s' "$1" > "$work/mj/night"; }
+set_night '0 -1 0'
+PIR_REASON=pir start_pir_daemon 'snapshot_delay_ms=0\nnight_wait_ms=4000'
+check 'it says that it waits' wait_for "$work/daemon-pir.log" 'waiting for night mode' 8
+sleep_s 1
+check 'no picture while the light is not measured' test "$(snap_total_lines)" = 0
+set_night '0 22000 1'
+sleep_s 0.8
+check 'no picture while Majestic counts toward night' test "$(snap_total_lines)" = 0
+set_night '1 22000 0'
+check 'the picture follows once night mode is on' test "$(for i in $(seq 1 30); do [ "$(snap_total_lines)" -ge 1 ] && echo 1 && break; sleep_s 0.1; done)" = 1
+check 'waiting is logged once for the picture' test "$(grep -c 'waiting for night mode' "$work/daemon-pir.log")" = 1
+check_not 'and the wait did not run out' grep -q 'did not come in time' "$work/daemon-pir.log"
+kill_daemon
+
+echo '-- night_wait_ms: in daylight the picture does not wait'
+set_night '0 2000 0'
+PIR_REASON=pir start_pir_daemon 'snapshot_delay_ms=0\nnight_wait_ms=4000'
+check 'the picture comes at once' test "$(for i in $(seq 1 30); do [ "$(snap_total_lines)" -ge 1 ] && echo 1 && break; sleep_s 0.1; done)" = 1
+check_not 'and nothing waited' grep -q 'waiting for night mode' "$work/daemon-pir.log"
+kill_daemon
+
+echo '-- night_wait_ms: the wait is bounded'
+set_night '0 -1 0'
+PIR_REASON=pir start_pir_daemon 'snapshot_delay_ms=0\nnight_wait_ms=1500'
+check 'it waits' wait_for "$work/daemon-pir.log" 'waiting for night mode' 8
+check 'the picture comes anyway when the wait runs out' test "$(for i in $(seq 1 40); do [ "$(snap_total_lines)" -ge 1 ] && echo 1 && break; sleep_s 0.1; done)" = 1
+check 'and the log says so' grep -q 'night mode did not come in time' "$work/daemon-pir.log"
+kill_daemon
+
+echo '-- night_wait_ms: a Majestic without night metrics does not hold the picture'
+rm -f "$work/mj/night"
+PIR_REASON=pir start_pir_daemon 'snapshot_delay_ms=0\nnight_wait_ms=4000'
+check 'the picture comes at once' test "$(for i in $(seq 1 30); do [ "$(snap_total_lines)" -ge 1 ] && echo 1 && break; sleep_s 0.1; done)" = 1
+check_not 'and nothing waited' grep -q 'waiting for night mode' "$work/daemon-pir.log"
 kill_daemon
 PIR_REASON=
 
@@ -1137,7 +1186,10 @@ check 'motion_settle above 600 and negative are rejected' test "$(config_exit 'h
 grep -qE 'AddressSanitizer|runtime error' "$work/daemon-sleep.log" 2> /dev/null && touch "$work/sleep-sanitizer"
 check_not 'the sanitizers report nothing during the sleep tests' test -e "$work/sleep-sanitizer"
 
-check 'pir_sensitivity above 3 is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\npir_motion=1\npir_sensitivity=4\n')" = 2
+check 'pir_sensitivity above 5 is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\npir_motion=1\npir_sensitivity=6\n')" = 2
+check 'night_wait_ms above 8000 is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nnight_wait_ms=8001\n')" = 2
+check 'night_wait_ms=3000 is accepted' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nnight_wait_ms=3000\n')" = 3
+check 'pir_sensitivity 5, the factory high level, is accepted' test "$(config_exit 'host=127.0.0.1\nmotion=1\npir_motion=1\nmotion_video=0\npir_sensitivity=5\n')" = 3
 check 'pir_motion without motion=1 is rejected' test "$(config_exit 'host=127.0.0.1\npir_motion=1\n')" = 2
 check 'a valid PIR configuration is accepted' test "$(config_exit 'host=127.0.0.1\nmotion=1\npir_motion=1\nmotion_video=0\npir_sensitivity=2\n')" = 3
 
