@@ -204,6 +204,32 @@ The new drivers load at the next cold start; a software reboot would load them t
 
 Rollback: upload the package again and run `sh rollback.sh`. It puts back the two drivers from `syslink_poll.ko.before-sleep` and `syslink_net_irq.ko.before-sleep`. If the camera does not come up after a cold start, log in on the UART during one of its boot windows and copy those two files over the drivers.
 
+## Step 10 (optional). Stage 5: the daemon that puts the camera to sleep
+
+Replaces the MQTT daemon with the build that supports `sleep_after` (see [MQTT and Home Assistant](mqtt-home-assistant.md#sleep)). Needs stages 3 and 4. The sleep is off until `sleep_after=` is added to `mqtt.conf`, so the new daemon behaves like the old one at first. It touches no other file.
+
+```sh
+tools/package.sh stage5-sleep-daemon
+python3 tools/upload-archive.py build/packages/stage5-sleep-daemon.tar.gz "$DOORVIEW_PW"
+# on the camera:
+cd /tmp/doorview-upload && sh install.sh .       # prints SLEEP_DAEMON_INSTALLED
+```
+
+Rollback: upload the package again and run `sh rollback.sh`; it puts back `doorview-mqtt.before-sleep`. The keys can stay in `mqtt.conf`: the old daemon ignores them. Before a session on the UART, create `/tmp/doorview-stay-awake` so that the camera does not sleep in the middle of it.
+
+## Step 11 (optional). Stage 6: switch off the coprocessor's own wake-up timer
+
+Replaces the MQTT daemon and `syslink_net_irq.ko` with builds that send the wake-up timer command (`8a:7b`) before every sleep. Without it the coprocessor wakes the sleeping SoC by its own timer about every 5 minutes (reason `timer`). Needs stages 4 and 5 and expects exactly their files. The daemon sends `wake_timer=<seconds>` (default 0 = off); nothing else changes.
+
+```sh
+tools/package.sh stage6-wake-timer
+python3 tools/upload-archive.py build/packages/stage6-wake-timer.tar.gz "$DOORVIEW_PW"
+# on the camera:
+cd /tmp/doorview-upload && sh install.sh .       # prints TIMER_INSTALLED
+```
+
+The new driver loads at the next cold start (after the next sleep); to try it without one, load it into the running camera as described in [factory firmware](factory-firmware.md). Rollback: upload the package again and run `sh rollback.sh`.
+
 ## Verification checklist
 
 - [ ] Console shows `U-Boot 2022.10` and `Linux version 4.9.37`.

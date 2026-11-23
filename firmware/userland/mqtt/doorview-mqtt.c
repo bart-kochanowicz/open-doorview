@@ -6,6 +6,9 @@
  * snapshot=1 it publishes a JPEG from Majestic when motion starts, so Home Assistant never has to reach the camera.
  * With live=1 it subscribes to doorview/<node>/live/set and, on ON, publishes small pictures to doorview/<node>/live for
  * live_seconds (a slide show on demand); OFF or the time running out ends it.
+ * With sleep_after=<seconds> it puts the camera to sleep, like the factory firmware, when nothing has happened for that
+ * long: it switches the PIR on, syncs and asks the syslink driver for the standby (see docs/factory-firmware.md); a PIR
+ * wake-up (reason "pir" in the syslink_poll parameter) is reported as motion with a snapshot, so Home Assistant sees it.
  * Platform access goes through sys.h, so the same logic runs on the camera and on a test host. */
 #include "sys.h"
 
@@ -58,6 +61,13 @@ struct config {
     int live_interval_ms;
     char live_path[128];
     char snapshot_path[128];
+    int sleep_after;
+    int sleep_usb;
+    int wake_timer;
+    char reason_file[128];
+    char mcu_parameter[128];
+    char standby_parameter[128];
+    char stay_awake_file[128];
 };
 
 static struct config cfg;
@@ -300,6 +310,10 @@ static int load_config(const char *path)
     str_copy(cfg.live_path, sizeof(cfg.live_path), "/image.jpg?width=640&height=360&qfactor=40");
     cfg.snapshot_cooldown = 30;
     str_copy(cfg.snapshot_path, sizeof(cfg.snapshot_path), "/image.jpg?qfactor=60");
+    str_copy(cfg.reason_file, sizeof(cfg.reason_file), "/sys/module/syslink_poll/parameters/reason");
+    str_copy(cfg.mcu_parameter, sizeof(cfg.mcu_parameter), "/sys/module/syslink_net/parameters/mcu");
+    str_copy(cfg.standby_parameter, sizeof(cfg.standby_parameter), "/sys/module/syslink_net/parameters/standby");
+    str_copy(cfg.stay_awake_file, sizeof(cfg.stay_awake_file), "/tmp/doorview-stay-awake");
     str_copy(cfg.node, sizeof(cfg.node), "front-door-camera");
     str_copy(cfg.name, sizeof(cfg.name), "Front door camera");
     str_copy(cfg.discovery, sizeof(cfg.discovery), "homeassistant");
@@ -437,6 +451,25 @@ static int load_config(const char *path)
                 return -12;
             if (!store(cfg.snapshot_path, sizeof(cfg.snapshot_path), value))
                 return -9;
+        } else if (str_eq(line, "sleep_after")) {
+            if (!parse_number(value, &number) || (number != 0 && (number < 10 || number > 3600)))
+                return -23;
+            cfg.sleep_after = number;
+        } else if (str_eq(line, "wake_timer")) {
+            if (!parse_number(value, &number) || number < 0 || number > 604800)
+                return -26;
+            cfg.wake_timer = number;
+        } else if (str_eq(line, "sleep_usb")) {
+            cfg.sleep_usb = str_eq(value, "1");
+        } else if (str_eq(line, "reason_file") || str_eq(line, "mcu_parameter") || str_eq(line, "standby_parameter") ||
+                   str_eq(line, "stay_awake_file")) {
+            char *target = str_eq(line, "reason_file") ? cfg.reason_file : str_eq(line, "mcu_parameter") ? cfg.mcu_parameter
+                         : str_eq(line, "standby_parameter") ? cfg.standby_parameter : cfg.stay_awake_file;
+
+            if (!valid_path(value))
+                return -24;
+            if (!store(target, 128, value))
+                return -9;
         } else if (str_eq(line, "snapshot_cooldown")) {
             if (!parse_number(value, &number) || number < 1 || number > 3600)
                 return -13;
@@ -445,6 +478,8 @@ static int load_config(const char *path)
     }
     if (cfg.snapshot && !cfg.motion)
         return -14; /* the snapshot is taken when motion starts */
+    if (cfg.sleep_after && !cfg.snapshot)
+        return -25; /* a wake-up is reported as motion with a snapshot */
     return have_host ? 0 : -8;
 }
 
@@ -636,6 +671,8 @@ static int motion_sample_count;
 static char metrics[METRICS_MAX];
 static u8 snapshot_buffer[SNAPSHOT_HEAD + SNAPSHOT_RESPONSE_MAX];
 static int snapshot_pending;
+/* Something happened that keeps the camera awake: motion, a button press, a PIR alarm, a picture, a live view. */
+static int activity_seen;
 static int have_snapshot;
 static u32 snapshot_deadline_ms;
 static u32 motion_settle_until_ms; /* no rise counts before this: motion_settle seconds after the start or a Majestic restart */
@@ -964,6 +1001,8 @@ static void poll_motion(u32 now)
     update_motion(now);
     if (motion_state != previous)
         dirty_motion = 1;
+    if (motion_state == 1)
+        activity_seen = 1;
     if (cfg.snapshot && previous == 0 && motion_state == 1) {
         u32 edge = sys_now_ms();
 
@@ -1056,6 +1095,7 @@ static int take_snapshot(void)
     sent_at = sys_now_ms();
     if (send_all(start, packet_length))
         return -1;
+    activity_seen = 1;
     {
         char text[64];
         struct out o = { text, 0, (int)sizeof(text) - 1, 0 };
@@ -1091,6 +1131,7 @@ static void live_start(u32 now)
         live_warned = 0;
         live_next_ms = now;
         dirty_live = 1;
+        activity_seen = 1;
         logmsg("live view started");
     }
     live_deadline_ms = now + (u32)cfg.live_seconds * 1000u;
@@ -1105,6 +1146,7 @@ static void live_stop(void)
         return;
     live_active = 0;
     dirty_live = 1;
+    activity_seen = 1;
     put_text(&o, "live view ended, ");
     put_decimal(&o, (int)live_frames);
     put_text(&o, " pictures, ");
@@ -1194,6 +1236,13 @@ static int hex_value(char c)
     return -1;
 }
 
+static void handle_pir_line(const char *line, int length)
+{
+    if (replaying || !find_text(line, length, "doorview_power: command=03 "))
+        return;
+    activity_seen = 1;
+}
+
 static void handle_power_line(const char *line, int length)
 {
     const char *payload = find_text(line, length, "payload=");
@@ -1264,6 +1313,7 @@ static void handle_button_line(const char *line, int length)
         have_last_button = 1;
     }
     pending_buttons++;
+    activity_seen = 1;
 }
 
 static void handle_kmsg_text(const char *text, int length)
@@ -1277,6 +1327,7 @@ static void handle_kmsg_text(const char *text, int length)
 
             if (line_length > 0) {
                 handle_power_line(text + start, line_length);
+                handle_pir_line(text + start, line_length);
                 handle_button_line(text + start, line_length);
             }
             start = index + 1;
@@ -1512,6 +1563,169 @@ static void read_socket(u32 now)
     }
 }
 
+/* ---- sleep (off unless sleep_after is set) ---- */
+
+#define SLEEP_PIR_SETTLE_MS 500u
+#define SLEEP_POWER_OFF_WAIT_MS 30000u
+#define SLEEP_RETRY_MS 300000u
+
+static u32 last_activity_ms;
+static u32 sleep_retry_ms;
+static int wake_pir_pending;
+static int sleep_logged_skip;
+
+static int write_text(const char *path, const char *text)
+{
+    int fd = sys_open_write(path);
+    int result;
+
+    if (fd < 0)
+        return -1;
+    result = sys_write(fd, text, str_len(text)) == str_len(text) ? 0 : -1;
+    sys_close(fd);
+    return result;
+}
+
+/* The syslink_poll parameter holds the reason the coprocessor gave for starting the SoC ("pir", "key", "poweron"...). */
+static void read_wake_reason(void)
+{
+    char reason[24];
+    char text[64];
+    struct out o = { text, 0, (int)sizeof(text) - 1, 0 };
+    int fd = sys_open_read(cfg.reason_file, 0);
+    int count = 0;
+    int index;
+
+    if (fd < 0)
+        return;
+    count = sys_read(fd, reason, (int)sizeof(reason) - 1);
+    sys_close(fd);
+    if (count <= 0)
+        return;
+    for (index = 0; index < count && reason[index] > ' ' && reason[index] <= '~'; index++)
+        ;
+    reason[index] = 0;
+    if (!reason[0])
+        return;
+    put_text(&o, "wake-up reason: ");
+    put_text(&o, reason);
+    text[o.length] = 0;
+    logmsg(text);
+    wake_pir_pending = str_eq(reason, "pir");
+}
+
+/* A PIR wake-up is motion that happened before Linux was up: report it once, with a snapshot, as a normal edge. */
+static void report_wake_motion(u32 now)
+{
+    wake_pir_pending = 0;
+    motion_state = 1;
+    motion_until_ms = now + (u32)cfg.motion_hold * 1000u;
+    dirty_motion = 1;
+    if (cfg.snapshot) {
+        snapshot_pending = 1;
+        snapshot_due_ms = now + (u32)cfg.snapshot_delay_ms;
+        snapshot_deadline_ms = now + SNAPSHOT_PENDING_MS;
+    }
+    last_activity_ms = now;
+}
+
+static int sleep_blocked(void)
+{
+    int fd;
+
+    if (live_active || snapshot_pending || motion_state == 1 || pending_buttons > 0 || wake_pir_pending)
+        return 1;
+    if (dirty_battery || dirty_status || dirty_usb || dirty_motion || dirty_live)
+        return 1;
+    /* The first power frame has not arrived: do not guess whether the camera is on a charger. */
+    if (usb < 0 || (usb && !cfg.sleep_usb))
+        return 1;
+    fd = sys_open_read(cfg.stay_awake_file, 1);
+    if (fd >= 0) {
+        sys_close(fd);
+        return 1;
+    }
+    return 0;
+}
+
+/* The text for the mcu parameter that sets the coprocessor's wake-up timer: 7b and the seconds as four bytes, little endian. */
+static void wake_timer_text(int seconds, char *text)
+{
+    static const char digits[] = "0123456789abcdef";
+    int index;
+
+    text[0] = '7';
+    text[1] = 'b';
+    for (index = 0; index < 4; index++) {
+        u32 byte = ((u32)seconds >> (8 * index)) & 0xffu;
+
+        text[2 + 2 * index] = digits[byte >> 4];
+        text[3 + 2 * index] = digits[byte & 15u];
+    }
+    text[10] = '\n';
+    text[11] = 0;
+}
+
+/* The factory order: wake timer, PIR on, sync, then the driver sends 8a:77 07 and 9a:03 and answers the coprocessor's 0xa0.
+ * The coprocessor wakes the SoC by its own timer, observed as every 5 minutes, unless it is told otherwise (wake_timer=0). */
+static void maybe_sleep(u32 now)
+{
+    static const u8 disconnect[2] = { 0xe0, 0 };
+    u32 waited;
+
+    if (cfg.sleep_after <= 0 || link != LINK_UP || (int)(now - sleep_retry_ms) < 0)
+        return;
+    if (activity_seen) {
+        activity_seen = 0;
+        last_activity_ms = now;
+    }
+    if (now - last_activity_ms < (u32)cfg.sleep_after * 1000u)
+        return;
+    if (sleep_blocked()) {
+        if (!sleep_logged_skip) {
+            sleep_logged_skip = 1;
+            logmsg("sleep postponed: the camera is busy, on a charger or kept awake");
+        }
+        return;
+    }
+    sleep_logged_skip = 0;
+    logmsg("going to sleep");
+    /* Home Assistant is told at once instead of after the keepalive; the connection ends cleanly. */
+    if (publish("availability", "offline", 1) || send_all(disconnect, 2)) {
+        link_fail("publish failed");
+        return;
+    }
+    {
+        char timer[12];
+
+        wake_timer_text(cfg.wake_timer, timer);
+        if (write_text(cfg.mcu_parameter, timer) < 0)
+            logmsg("wake timer refused by the driver: the coprocessor keeps its own timer");
+        sys_wait(-1, -1, 0, (int)SLEEP_PIR_SETTLE_MS);
+    }
+    if (write_text(cfg.mcu_parameter, "780100\n") < 0) {
+        logmsg("sleep refused: cannot switch the PIR on");
+        sleep_retry_ms = now + SLEEP_RETRY_MS;
+        link_fail("sleep refused");
+        return;
+    }
+    sys_wait(-1, -1, 0, (int)SLEEP_PIR_SETTLE_MS);
+    sys_sync();
+    if (write_text(cfg.standby_parameter, "1\n") < 0) {
+        logmsg("sleep refused: cannot start the standby");
+        sleep_retry_ms = now + SLEEP_RETRY_MS;
+        link_fail("sleep refused");
+        return;
+    }
+    /* The coprocessor cuts the power within seconds; reaching the end of this wait means that it did not. */
+    for (waited = 0; waited < SLEEP_POWER_OFF_WAIT_MS; waited += 1000u)
+        sys_wait(-1, -1, 0, 1000);
+    logmsg("the camera is still running after the standby request");
+    sleep_retry_ms = sys_now_ms() + SLEEP_RETRY_MS;
+    last_activity_ms = sys_now_ms();
+    link_fail("standby did not switch the camera off");
+}
+
 int app_main(const char *config_path)
 {
     int kmsg_fd;
@@ -1541,7 +1755,9 @@ int app_main(const char *config_path)
         motion_settle_until_ms = now + (u32)cfg.motion_settle * 1000u;
         daemon_started_ms = now;
         next_attempt_ms = now;
+        last_activity_ms = now;
     }
+    read_wake_reason();
     logmsg("started");
 
     for (;;) {
@@ -1588,6 +1804,8 @@ int app_main(const char *config_path)
                 link_fail("publish failed");
                 break;
             }
+            if (wake_pir_pending)
+                report_wake_motion(now);
             if (snapshot_pending && (int)(now - snapshot_due_ms) >= 0) {
                 int expired = (int)(now - snapshot_deadline_ms) >= 0;
                 int cooling = have_snapshot && now - last_snapshot_ms < (u32)cfg.snapshot_cooldown * 1000u;
@@ -1639,8 +1857,11 @@ int app_main(const char *config_path)
                     break;
                 }
             }
-            if (now - last_received_ms > (u32)cfg.keepalive * 1500u)
+            if (now - last_received_ms > (u32)cfg.keepalive * 1500u) {
                 link_fail("broker stopped answering");
+                break;
+            }
+            maybe_sleep(now);
             break;
         }
         watchdog(now);
