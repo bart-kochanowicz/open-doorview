@@ -40,10 +40,12 @@ build_module() { # <source dir under firmware/kernel> <module name> <output name
     cp "$work/$module.ko" "$out/kernel/$name"
 }
 echo "== kernel modules =="
+build_module syslink-poll-stage1 syslink_poll syslink_poll-stage1.ko
 build_module syslink-handshake syslink_poll syslink_poll.ko
 build_module syslink-handshake syslink_bg syslink_bg.ko
 build_module syslink-net-poll syslink_net syslink_net.ko
 build_module syslink-net-irq-stage2 syslink_net syslink_net_irq-stage2.ko
+build_module syslink-net-irq-stage3 syslink_net syslink_net_irq-stage3.ko
 build_module syslink-net-irq syslink_net syslink_net_irq.ko
 
 echo "== camera binaries =="

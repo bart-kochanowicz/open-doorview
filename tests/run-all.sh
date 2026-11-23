@@ -15,6 +15,7 @@ run() {
 run firmware/stage1-wifi/tests/run-tests.sh
 run firmware/stage2-lcd/tests/run-tests.sh
 run firmware/stage3-mqtt/tests/run-tests.sh
+run firmware/stage4-sleep/tests/run-tests.sh
 run tools/tests/run-tests.sh
 if command -v docker > /dev/null 2>&1 && docker info > /dev/null 2>&1; then
     run firmware/userland/mqtt/tests/run-tests.sh
