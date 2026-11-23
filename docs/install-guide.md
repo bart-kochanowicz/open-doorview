@@ -286,6 +286,17 @@ cd /tmp/doorview-upload && sh install.sh .       # prints EARLY_DAEMON_INSTALLED
 
 Also changed by hand on the unit (2026-11-23): the kernel parameters in the U-Boot variable `extras` are now `quiet printk.time=1 initcall_blacklist=femac_mdio_driver_init,femac_driver_init` (the ethernet driver, which waited 0.85 s for a PHY this camera does not have, is not started; the kernel log keeps its time stamps), and the picture is `snapshot_path=/image.jpg?width=960&height=540&qfactor=55` (about 48 KB, 1.0 s over the Wi-Fi). To undo the kernel part: `fw_setenv extras quiet`.
 
+## Step 16 (optional). Stage 11: the preview after a front-button wake-up
+
+**Not run on a camera yet.** The press of the front button that wakes a sleeping camera is consumed by the coprocessor and never reaches the button listener, so no preview starts. Stage 11 (`stage11-wake-preview`) replaces `/etc/init.d/S96doorview-lcd`: when the wake-up reason is `wifikey` (the front button, observed) or `key`, it waits until Majestic gives a picture (at most 20 s), starts the LCD service and runs the preview once; any other start keeps the 20 s delay and waits for a press as before. The old hook is kept as `/etc/doorview/S96doorview-lcd.before-wake`.
+
+```sh
+tools/package.sh stage11-wake-preview
+python3 tools/upload-archive.py build/packages/stage11-wake-preview.tar.gz "$DOORVIEW_PW"
+# on the camera:
+cd /tmp/doorview-upload && sh install.sh .       # prints WAKE_PREVIEW_INSTALLED
+```
+
 ## Verification checklist
 
 - [ ] Console shows `U-Boot 2022.10` and `Linux version 4.9.37`.

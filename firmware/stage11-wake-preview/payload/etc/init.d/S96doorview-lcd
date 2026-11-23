@@ -1,0 +1,43 @@
+#!/bin/sh
+
+service=${DOORVIEW_LCD_SERVICE:-/etc/doorview-lcd/service}
+delay=${DOORVIEW_LCD_DELAY:-20}
+reason_file=${DOORVIEW_REASON_FILE:-/sys/module/syslink_poll/parameters/reason}
+preview=${DOORVIEW_LCD_PREVIEW:-/tmp/lcd-vo-test/live-30.sh}
+preview_log=${DOORVIEW_LCD_PREVIEW_LOG:-/tmp/lcd-vo-test/button-preview-last.log}
+picture=${DOORVIEW_LCD_PICTURE:-http://127.0.0.1/image.jpg?width=64&height=36}
+wait_tenths=${DOORVIEW_LCD_WAIT_TENTHS:-200}
+boot_log=${DOORVIEW_LCD_BOOT_LOG:-/tmp/doorview-lcd-boot.log}
+
+# The preview takes its frames from Majestic's pipeline: it can start once Majestic gives a picture.
+majestic_ready() {
+    i=0
+    while [ "$i" -lt "$wait_tenths" ]; do
+        wget -q -O /dev/null "$picture" 2> /dev/null && return 0
+        sleep 0.1
+        i=$((i + 1))
+    done
+    return 1
+}
+
+case "${1:-}" in
+    start)
+        reason=
+        [ -r "$reason_file" ] && read -r reason < "$reason_file"
+        case "$reason" in
+            wifikey|key)
+                # The press of the front button that woke the camera is consumed by the coprocessor and never
+                # reaches the listener, so the preview the owner asked for is started here, as soon as it can be.
+                ( majestic_ready && sh "$service" start && sh "$preview" > "$preview_log" 2>&1 ) \
+                    < /dev/null > "$boot_log" 2>&1 &
+                ;;
+            *)
+                # Let majestic and the SDIO link settle. The service starts in the
+                # background so it can never delay or block the rest of boot.
+                ( sleep "$delay"; sh "$service" start ) < /dev/null > "$boot_log" 2>&1 &
+                ;;
+        esac
+        ;;
+    stop|restart|status) sh "$service" "$1" ;;
+    *) echo "Usage: $0 {start|stop|restart|status}" >&2; exit 2 ;;
+esac
