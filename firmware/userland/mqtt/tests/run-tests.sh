@@ -882,10 +882,16 @@ check 'and one picture' test "$(for i in $(seq 1 60); do [ "$(wc -l < "$work/sna
 check 'the picture is the one Majestic served' test "$(tail -n 1 "$work/snap.log" | cut -d'|' -f3)" = "$(cat "$work/mj/img.hex")"
 check 'the camera does not sleep while motion is still being reported' test "$(cat "$work/standby")" = ""
 check 'after sleep_after seconds of nothing the standby is requested' wait_sleep 20
-check 'the PIR was switched on first (u16 1, as in the factory)' test "$(cat "$work/mcu")" = 780100
+check 'the wake timer is switched off first (7b, four zero bytes) and then the PIR on (u16 1, as in the factory)' test "$(cat "$work/mcu")" = "$(printf '7b00000000\n780100')"
 check 'Home Assistant is told that the camera is offline before it goes' wait_for "$sleep_log" '|doorview/front-door-camera/availability|offline' 3
 check 'the log says that it is going to sleep' grep -q 'going to sleep' "$work/daemon-sleep.log"
 check 'no second standby request in the first seconds' test "$(grep -c 'going to sleep' "$work/daemon-sleep.log")" = 1
+kill_daemon
+
+echo '-- a wake_timer asks the coprocessor to wake the camera after that many seconds (little endian)'
+start_sleep_daemon pir "$work/kmsg-battery" 'wake_timer=21600'
+check 'wake_timer=21600 is sent as 7b followed by 60 54 00 00' wait_sleep 20
+check 'the timer comes before the PIR switch' test "$(cat "$work/mcu")" = "$(printf '7b60540000\n780100')"
 kill_daemon
 
 echo '-- another wake-up reason: no motion, but the same sleep'
@@ -1046,6 +1052,8 @@ check 'sleep_after without snapshot=1 is rejected' test "$(config_exit 'host=127
 check 'a valid sleep configuration is accepted' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nsleep_usb=1\n')" = 3
 check 'sleep_after=0 means off and is accepted without a snapshot' test "$(config_exit 'host=127.0.0.1\nsleep_after=0\n')" = 3
 check 'a parameter path must be a clean absolute path' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nstandby_parameter=/a b\n')" = 2
+check 'wake_timer above a week is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nwake_timer=604801\n')" = 2
+check 'wake_timer 0 and a week are accepted' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nwake_timer=0\n')$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nwake_timer=604800\n')" = 33
 check 'a relative parameter path is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nmcu_parameter=mcu\n')" = 2
 
 echo "passed=$passed failed=$failed"

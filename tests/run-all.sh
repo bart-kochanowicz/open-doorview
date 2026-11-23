@@ -17,6 +17,7 @@ run firmware/stage2-lcd/tests/run-tests.sh
 run firmware/stage3-mqtt/tests/run-tests.sh
 run firmware/stage4-sleep/tests/run-tests.sh
 run firmware/stage5-sleep-daemon/tests/run-tests.sh
+run firmware/stage6-wake-timer/tests/run-tests.sh
 run tools/tests/run-tests.sh
 if command -v docker > /dev/null 2>&1 && docker info > /dev/null 2>&1; then
     run firmware/userland/mqtt/tests/run-tests.sh

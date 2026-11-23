@@ -31,7 +31,7 @@ What is **not** done or not known (battery scale, charge state, PIR, audio, DHCP
 | Path | Contents |
 |---|---|
 | `docs/` | install guide, hardware notes, procedures, known limits |
-| `firmware/stage1-wifi`, `stage2-lcd`, `stage3-mqtt`, `stage4-sleep`, `stage5-sleep-daemon` | installable packages: installer, rollback, payload, tests ([overview](firmware/README.md)) |
+| `firmware/stage1-wifi`, `stage2-lcd`, `stage3-mqtt`, `stage4-sleep`, `stage5-sleep-daemon`, `stage6-wake-timer` | installable packages: installer, rollback, payload, tests ([overview](firmware/README.md)) |
 | `firmware/kernel/` | source of the SDIO/Wi-Fi kernel modules |
 | `firmware/userland/` | LCD and button programs, the MQTT daemon |
 | `tools/` | host-side helpers: UART upload and backup, Wi-Fi configuration, JFFS2 reader, build and packaging scripts |

@@ -232,33 +232,51 @@ unlock:
 }
 
 /*
- * One command for the coprocessor on the application channel (0x8a), written as six
- * hex digits: the command and its u16 payload. Only the PIR switch (0x78: 0 or 1)
- * and the PIR sensitivity (0x79: the level, 1 to 3, in the high byte) are accepted;
- * every other command stays refused until it has been tested on its own.
+ * One command for the coprocessor on the application channel (0x8a), written as hex digits: the command byte and its
+ * payload. Only these are accepted; every other command stays refused until it has been tested on its own:
+ *   0x78  PIR off/on, u16 (0 or 1)                                  "780000", "780100"
+ *   0x79  PIR sensitivity, level 1 to 3 in the high byte of a u16   "790001"
+ *   0x7b  wake-up timer, u32 seconds little endian, 0 = off, at most a week   "7b00000000", "7b2c010000" (300 s)
  */
-#define MCU_COMMAND_SIZE 3
+#define MCU_PAYLOAD_MAX 4
+#define MCU_TIMER_MAX 604800u
 
 static DEFINE_MUTEX(mcu_lock);
-static u8 mcu_command[MCU_COMMAND_SIZE];
+static u8 mcu_command;
+static u8 mcu_payload[MCU_PAYLOAD_MAX];
+static unsigned int mcu_payload_size;
 static bool mcu_pending;
 
 static int mcu_set(const char *value, const struct kernel_param *param)
 {
-    u8 command[MCU_COMMAND_SIZE];
+    u8 raw[1 + MCU_PAYLOAD_MAX];
+    unsigned int size;
     size_t len = strlen(value);
     int err = 0;
 
     if (len && value[len - 1] == '\n')
         len--;
-    if (len != sizeof(command) * 2 || hex2bin(command, value, sizeof(command)))
+    if (len == 6)
+        size = 2;
+    else if (len == 10)
+        size = 4;
+    else
         return -EINVAL;
-    if (command[0] == 0x78) {
-        if (command[1] > 1 || command[2])
+    if (hex2bin(raw, value, 1 + size))
+        return -EINVAL;
+    if (raw[0] == 0x78 && size == 2) {
+        if (raw[1] > 1 || raw[2])
             return -EINVAL;
-    } else if (command[0] == 0x79) {
-        if (command[1] || command[2] < 1 || command[2] > 3)
+    } else if (raw[0] == 0x79 && size == 2) {
+        if (raw[1] || raw[2] < 1 || raw[2] > 3)
             return -EINVAL;
+    } else if (raw[0] == 0x7b && size == 4) {
+        u32 seconds = raw[1] | (raw[2] << 8) | (raw[3] << 16) | ((u32)raw[4] << 24);
+
+        if (seconds > MCU_TIMER_MAX)
+            return -EINVAL;
+    } else if (raw[0] == 0x78 || raw[0] == 0x79 || raw[0] == 0x7b) {
+        return -EINVAL;
     } else {
         return -EPERM;
     }
@@ -267,7 +285,9 @@ static int mcu_set(const char *value, const struct kernel_param *param)
     if (mcu_pending) {
         err = -EBUSY;
     } else {
-        memcpy(mcu_command, command, sizeof(command));
+        mcu_command = raw[0];
+        memcpy(mcu_payload, raw + 1, size);
+        mcu_payload_size = size;
         mcu_pending = true;
     }
     mutex_unlock(&mcu_lock);
@@ -282,8 +302,8 @@ static int send_mcu_request(struct sdio_func *func, u8 *data)
     static const u8 header[40] = { [0] = 0x31, [16] = 0x01,
         [20] = 0x02, [21] = 0xb0, [22] = 0xa0, [23] = 0x20,
         [32] = 0x8a, [34] = 0x01, [35] = 0x01 };
-    size_t length = sizeof(header) + 2;
-    u8 command[MCU_COMMAND_SIZE];
+    u8 command, payload[MCU_PAYLOAD_MAX];
+    unsigned int size;
     int err;
 
     mutex_lock(&mcu_lock);
@@ -291,17 +311,18 @@ static int send_mcu_request(struct sdio_func *func, u8 *data)
         mutex_unlock(&mcu_lock);
         return 0;
     }
-    memcpy(command, mcu_command, sizeof(command));
+    command = mcu_command;
+    size = mcu_payload_size;
+    memcpy(payload, mcu_payload, size);
     mutex_unlock(&mcu_lock);
 
     memcpy(data, header, sizeof(header));
-    data[28] = data[38] = 0x0a;
-    data[33] = command[0];
-    data[40] = command[1];
-    data[41] = command[2];
-    err = sdio_writesb(func, 0, data, length);
+    data[28] = data[38] = 8 + size;
+    data[33] = command;
+    memcpy(data + sizeof(header), payload, size);
+    err = sdio_writesb(func, 0, data, sizeof(header) + size);
     if (!err)
-        pr_info("doorview: mcu command=%02x payload=%02x%02x sent\n", command[0], command[1], command[2]);
+        pr_info("doorview: mcu command=%02x payload=%*phN sent\n", command, (int)size, payload);
 
     /* A failed write is not repeated: the owner asked once and reads the log. */
     mutex_lock(&mcu_lock);

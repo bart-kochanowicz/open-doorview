@@ -22,7 +22,7 @@ int sys_open_read(const char *path, int nonblock)
 
 int sys_open_write(const char *path)
 {
-    int fd = open(path, O_WRONLY);
+    int fd = open(path, O_WRONLY | O_APPEND);
 
     return fd < 0 ? -errno : fd;
 }

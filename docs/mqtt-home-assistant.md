@@ -132,9 +132,10 @@ Tested with a real Mosquitto and a fake Majestic (see the test suite): pictures 
 What the daemon does, in this order, when the camera has been idle for `sleep_after` seconds and nothing blocks it:
 
 1. publishes `availability` = `offline` (retained) and closes the connection cleanly, so Home Assistant shows the camera as offline at once, not after the keep-alive;
-2. writes `780100` to the `mcu` parameter of the syslink driver (PIR on; `mcu_parameter=` changes the path);
-3. syncs the file systems;
-4. writes `1` to the `standby` parameter (`standby_parameter=`): the driver sends `8a:77 07` and `9a:03` and answers the coprocessor's `0xa0`, which then switches the SoC off.
+2. writes the wake-up timer to the `mcu` parameter of the syslink driver (`mcu_parameter=` changes the path): `7b` and `wake_timer=<seconds>` as four little-endian bytes. **0, the default, switches the coprocessor's own timer off:** without this command the coprocessor wakes the SoC by itself about 5 minutes after every sleep (observed on 2026-11-23: wake-ups with the reason `timer`), which costs more than a fifth of the battery life; a value such as 21600 wakes it every 6 hours so that the battery value is refreshed;
+3. writes `780100` to the same parameter (PIR on);
+4. syncs the file systems;
+5. writes `1` to the `standby` parameter (`standby_parameter=`): the driver sends `8a:77 07` and `9a:03` and answers the coprocessor's `0xa0`, which then switches the SoC off.
 
 If the camera is still running 30 s later it logs that, reconnects, and does not try again for five minutes.
 

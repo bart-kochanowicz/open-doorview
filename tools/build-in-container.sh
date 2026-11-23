@@ -46,9 +46,15 @@ build_module syslink-handshake syslink_bg syslink_bg.ko
 build_module syslink-net-poll syslink_net syslink_net.ko
 build_module syslink-net-irq-stage2 syslink_net syslink_net_irq-stage2.ko
 build_module syslink-net-irq-stage3 syslink_net syslink_net_irq-stage3.ko
+build_module syslink-net-irq-stage4 syslink_net syslink_net_irq-stage4.ko
 build_module syslink-net-irq syslink_net syslink_net_irq.ko
 
 echo "== camera binaries =="
+stage5_mqtt=$repo/firmware/userland/mqtt-stage5
+${cross}gcc -Os -mfloat-abi=soft -march=armv7-a -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector \
+    -nostdlib -static -Wl,--gc-sections -Wl,--build-id -o "$out/userland/doorview-mqtt-stage5" "$stage5_mqtt/doorview-mqtt.c" "$stage5_mqtt/sys-arm.c"
+${cross}strip "$out/userland/doorview-mqtt-stage5"
+
 old_mqtt=$repo/firmware/userland/mqtt-stage3
 ${cross}gcc -Os -mfloat-abi=soft -march=armv7-a -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector \
     -nostdlib -static -Wl,--gc-sections -Wl,--build-id -o "$out/userland/doorview-mqtt-stage3" "$old_mqtt/doorview-mqtt.c" "$old_mqtt/sys-arm.c"

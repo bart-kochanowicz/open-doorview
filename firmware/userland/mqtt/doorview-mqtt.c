@@ -63,6 +63,7 @@ struct config {
     char snapshot_path[128];
     int sleep_after;
     int sleep_usb;
+    int wake_timer;
     char reason_file[128];
     char mcu_parameter[128];
     char standby_parameter[128];
@@ -454,6 +455,10 @@ static int load_config(const char *path)
             if (!parse_number(value, &number) || (number != 0 && (number < 10 || number > 3600)))
                 return -23;
             cfg.sleep_after = number;
+        } else if (str_eq(line, "wake_timer")) {
+            if (!parse_number(value, &number) || number < 0 || number > 604800)
+                return -26;
+            cfg.wake_timer = number;
         } else if (str_eq(line, "sleep_usb")) {
             cfg.sleep_usb = str_eq(value, "1");
         } else if (str_eq(line, "reason_file") || str_eq(line, "mcu_parameter") || str_eq(line, "standby_parameter") ||
@@ -1643,7 +1648,26 @@ static int sleep_blocked(void)
     return 0;
 }
 
-/* The factory order: PIR on, sync, then the driver sends 8a:77 07 and 9a:03 and answers the coprocessor's 0xa0. */
+/* The text for the mcu parameter that sets the coprocessor's wake-up timer: 7b and the seconds as four bytes, little endian. */
+static void wake_timer_text(int seconds, char *text)
+{
+    static const char digits[] = "0123456789abcdef";
+    int index;
+
+    text[0] = '7';
+    text[1] = 'b';
+    for (index = 0; index < 4; index++) {
+        u32 byte = ((u32)seconds >> (8 * index)) & 0xffu;
+
+        text[2 + 2 * index] = digits[byte >> 4];
+        text[3 + 2 * index] = digits[byte & 15u];
+    }
+    text[10] = '\n';
+    text[11] = 0;
+}
+
+/* The factory order: wake timer, PIR on, sync, then the driver sends 8a:77 07 and 9a:03 and answers the coprocessor's 0xa0.
+ * The coprocessor wakes the SoC by its own timer, observed as every 5 minutes, unless it is told otherwise (wake_timer=0). */
 static void maybe_sleep(u32 now)
 {
     static const u8 disconnect[2] = { 0xe0, 0 };
@@ -1670,6 +1694,14 @@ static void maybe_sleep(u32 now)
     if (publish("availability", "offline", 1) || send_all(disconnect, 2)) {
         link_fail("publish failed");
         return;
+    }
+    {
+        char timer[12];
+
+        wake_timer_text(cfg.wake_timer, timer);
+        if (write_text(cfg.mcu_parameter, timer) < 0)
+            logmsg("wake timer refused by the driver: the coprocessor keeps its own timer");
+        sys_wait(-1, -1, 0, (int)SLEEP_PIR_SETTLE_MS);
     }
     if (write_text(cfg.mcu_parameter, "780100\n") < 0) {
         logmsg("sleep refused: cannot switch the PIR on");
