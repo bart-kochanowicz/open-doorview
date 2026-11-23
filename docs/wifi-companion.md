@@ -86,5 +86,4 @@ With the polling driver the link repeatedly went silent: the frame counter froze
 | `firmware/kernel/syslink-handshake/syslink_poll.c` | GPIO wake-up exchange and SDIO rescan |
 | `firmware/kernel/syslink-handshake/syslink_bg.c` | SDIO handshake and heartbeat (the shipped binary is an earlier revision; see [known limits](known-limits.md)) |
 | `firmware/kernel/syslink-net-poll/syslink_net.c` | stage 1 network driver (polling) |
-| `firmware/kernel/syslink-net-irq-stage2/syslink_net.c` | stage 2 network driver (interrupt-driven) |
-| `firmware/kernel/syslink-net-irq/syslink_net.c` | stage 3 network driver: stage 2 plus the `doorview_power` log line |
+| `firmware/kernel/syslink-net-irq/syslink_net.c` | the interrupt-driven network driver (stages 2 to 4, 6 and 12 shipped successive revisions; the earlier ones are built from git history, see [building](building.md)), with the `doorview_power` log line, the coprocessor commands and the standby |

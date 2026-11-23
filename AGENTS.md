@@ -24,10 +24,10 @@ This repository holds the recovery procedures and the custom firmware layer for 
 | Path | What it is |
 |---|---|
 | `README.md`, `docs/install-guide.md` | what works and the end-to-end install |
-| `docs/` | procedures (`flash-layout.md`, `uart-pinout.md`, `openipc-flash.md`), hardware notes (`wifi-companion.md`, `factory-firmware.md`, `lcd-and-button.md`, `mqtt-home-assistant.md`), `troubleshooting.md`, `known-limits.md`, `building.md` |
+| `docs/` | procedures (`flash-layout.md`, `uart-pinout.md`, `openipc-flash.md`), hardware notes (`wifi-companion.md`, `factory-firmware.md`, `lcd-and-button.md`, `mqtt-home-assistant.md`, `night-vision.md`), `troubleshooting.md`, `known-limits.md` (the current state), `log.md` (the dated observations), `building.md`, `first-snap.md` |
 | `firmware/stage1-wifi`, `stage2-lcd`, `stage3-mqtt`, `stage4-sleep`, `stage5-sleep-daemon`, `stage6-wake-timer`, `stage7-pir-motion`, `stage8-fast-boot`, `stage9-lean`, `stage10-early-daemon`, `stage11-wake-preview`, `stage12-pir-high`, `stage13-night-wait` | installable packages: installer, rollback, payload, tests. The stages form a chain; later installers pin the exact files of earlier ones by SHA-256 |
-| `firmware/kernel/` | source of every kernel module, one directory per module |
-| `firmware/userland/` | LCD/button programs, the MQTT daemon, and `capture/first-snap.c` (a measurement prototype; on the unit it crashes in `GK_API_SYS_Init`) |
+| `firmware/kernel/` | source of the current kernel modules, one directory per module; the earlier stage revisions are built from git history (`OLD_SOURCES_COMMIT` in `tools/pins.sh`) |
+| `firmware/userland/` | LCD/button programs, the MQTT daemon (`mqtt/doorview-mqtt.c` includes `mqtt/parts/*.c` by topic, one translation unit) and `capture/first-snap.c` (a measurement prototype; on the unit it crashes in `GK_API_SYS_Init`) |
 | `firmware/EXPECTED-BUILDS.txt` | hashes of the binaries tested on a camera, and whether a rebuild reproduces them |
 | `tools/` | host-side helpers (UART, backup, packaging, build); see `tools/README.md` |
 | `tests/run-all.sh` | every suite that needs no camera |
@@ -45,7 +45,8 @@ Private material lives **outside** the repository (flash dumps, overlay backups,
 - **Tests:** run `tests/run-all.sh` before and after changing an installer or the daemon. A safety property (a refusal that must change nothing, an exact rollback) is only proven if a deliberately broken copy makes the suite fail; do that mutation check for new ones. Installer tests prove logic on a fake root, not behaviour on the real overlay.
 - **Installers:** keep their properties (mount check, no overwrite, hash-verified stage, hooks last, automatic exact rollback, no credentials in output). Changing a shipped file changes a hash that the next stage pins; update the pin and its tests deliberately.
 - **Binaries:** only add a binary to a `payload/` directory after it ran on a camera, and record its hash in `firmware/EXPECTED-BUILDS.txt`. If a shipped binary must be rebuilt (for example after a review fix) before it can be run on a camera, say so in `docs/known-limits.md` and the README until it has, and prefer a bit-identical reproducible build. Proprietary vendor blobs are downloaded, never committed. Do not publish factory firmware, dumps or extracted factory files.
-- **Style:** docs and code comments in English. Keep the surrounding code's density and idiom.
+- **Style:** docs and code comments in English. Keep the surrounding code's density and idiom. Format C with `tools/format.sh` (`tests/run-all.sh` checks it), and check with `tools/build.sh` that a change meant to be cosmetic leaves every binary identical.
+- **Docs:** `docs/known-limits.md` says what is true now; add dated observations to `docs/log.md` and keep only the conclusion in the topic page.
 
 ## Current state
 

@@ -16,31 +16,31 @@ Developed and tested on **one** RH-PD10 (Goke GK7202V300, 8 MiB SPI NOR, GC2053 
 | Snapshots and live view over MQTT | works (960 × 540 snapshots after motion; small frames on demand); Home Assistant never reaches the camera |
 | Night vision (IR-cut filter and IR LEDs) | works through Majestic with one GPIO (8); after a wake-up in the dark night mode comes within about 3 s and the wake-up picture waits for it (stage 13), see [night vision](docs/night-vision.md) |
 | RTSP and the web interface | possible (stages 1 to 3), but **switched off on the unit** for start-up time and security; the web interface is an administrator interface with no roles |
-| Front button lights the LCD with a 30 s live preview | works while the camera is awake |
+| Front button lights the LCD with a 30 s live preview | works while the camera is awake; after a front-button wake-up (stage 11) installed, not checked yet |
 | Battery, USB and button as MQTT/Home Assistant entities | works (stage 3 and later); while the camera sleeps they are unavailable, the homelab keeps the last battery reading |
 
-What is **not** done or not known (battery scale, charge state, PIR, audio, DHCP, reconnect, person detection and more) is in [known limits](docs/known-limits.md). Please read it before you flash.
+What is **not** done or not known (battery life in sleep mode, battery scale, PIR range, audio, DHCP, reconnect and more) is in [known limits](docs/known-limits.md), and the dated observations behind every claim are in the [work log](docs/log.md). Please read the known limits before you flash.
 
 ## Start here
 
 1. **[Install guide](docs/install-guide.md)**: from a factory camera to everything above, step by step, with checks and rollbacks.
 2. [Back up the factory flash](docs/flash-layout.md#backup-procedure) and [install OpenIPC](docs/openipc-flash.md).
 3. Background: [the Wi-Fi/battery coprocessor](docs/wifi-companion.md), [how the factory firmware sleeps and detects people](docs/factory-firmware.md), [LCD and button](docs/lcd-and-button.md), [MQTT and Home Assistant](docs/mqtt-home-assistant.md).
-4. [Troubleshooting](docs/troubleshooting.md), [building and testing](docs/building.md).
+4. [Troubleshooting](docs/troubleshooting.md), [building, testing and formatting](docs/building.md).
 
 ## Repository map
 
 | Path | Contents |
 |---|---|
-| `docs/` | install guide, hardware notes, procedures, known limits |
+| `docs/` | install guide, hardware notes, procedures, known limits, work log |
 | `firmware/stage1-wifi`, `stage2-lcd`, `stage3-mqtt`, `stage4-sleep`, `stage5-sleep-daemon`, `stage6-wake-timer`, `stage7-pir-motion`, `stage8-fast-boot`, `stage9-lean`, `stage10-early-daemon`, `stage11-wake-preview`, `stage12-pir-high`, `stage13-night-wait` | installable packages: installer, rollback, payload, tests ([overview](firmware/README.md)) |
 | `firmware/kernel/` | source of the SDIO/Wi-Fi kernel modules |
-| `firmware/userland/` | LCD and button programs, the MQTT daemon |
-| `tools/` | host-side helpers: UART upload and backup, Wi-Fi configuration, JFFS2 reader, build and packaging scripts |
+| `firmware/userland/` | LCD and button programs, the MQTT daemon (split by topic in `mqtt/parts/`), the `first-snap` prototype |
+| `tools/` | host-side helpers: UART upload and backup, Wi-Fi configuration, JFFS2 reader, build, formatting and packaging scripts |
 | `tests/run-all.sh` | every test suite that does not need a camera |
 | [`AGENTS.md`](AGENTS.md) | operating and approval rules for the project |
 
-Binaries are included only where they were tested on a camera, with one caveat: the current `doorview-mqtt` (it adds the motion sensor) has run on the camera for hours, not days (see [known limits](docs/known-limits.md)). Their hashes, and whether a rebuild reproduces them, are in `firmware/EXPECTED-BUILDS.txt`. The factory firmware, flash dumps, extracted factory files and the proprietary vendor video module are **not** in this repository.
+Binaries are included only where they were tested on a camera; the newest of them have run for hours or days, not months (see [known limits](docs/known-limits.md)). Their hashes, and whether a rebuild reproduces them, are in `firmware/EXPECTED-BUILDS.txt`. The factory firmware, flash dumps, extracted factory files and the proprietary vendor video module are **not** in this repository.
 
 ## How the work is organised
 
@@ -48,7 +48,7 @@ Each step depends on evidence from the one before; do not skip ahead.
 
 1. **Preserve:** two matching, complete reads of the factory flash, kept privately ([flash layout](docs/flash-layout.md)). A matching backup alone does not prove that restoration works; that was never tested.
 2. **Flash:** the OpenIPC image ([OpenIPC](docs/openipc-flash.md)).
-3. **Install the stages in order:** Wi-Fi, LCD and button, MQTT ([install guide](docs/install-guide.md)). Each installer is a flash write with its own rollback.
+3. **Install the stages in order:** Wi-Fi, LCD and button, MQTT, then the optional sleep, start-up and night stages ([install guide](docs/install-guide.md)). Each installer is a flash write with its own rollback.
 4. **Continue the work:** the ordered list is in [AGENTS.md](AGENTS.md#next-work-in-a-sensible-order); open questions are in [known limits](docs/known-limits.md).
 
 ## Safety and privacy

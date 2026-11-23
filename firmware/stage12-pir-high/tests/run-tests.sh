@@ -108,8 +108,6 @@ check 'the old daemon is the file the installer pins' test "$(digest "$old_daemo
 check 'the old driver is the file the installer pins' test "$(digest "$old_driver")" = 5a35ec4dd560094eaa55023ea49514b52c9e6d2364d50d485f035df0d504d2ec
 check 'the new daemon is the build recorded in EXPECTED-BUILDS.txt' grep -q "^$(digest "$here/payload/etc/doorview/doorview-mqtt")  doorview-mqtt-stage12 " "$here/../EXPECTED-BUILDS.txt"
 check 'the new driver is the build recorded in EXPECTED-BUILDS.txt' grep -q "^$(digest "$here/payload/etc/doorview/syslink_net_irq.ko")  syslink_net_irq.ko " "$here/../EXPECTED-BUILDS.txt"
-check 'the driver source accepts levels 1 to 5 for 0x79' grep -q 'raw\[2\] < 1 || raw\[2\] > 5' "$here/../kernel/syslink-net-irq/syslink_net.c"
-check 'the daemon source accepts pir_sensitivity up to 5' grep -q 'number < 0 || number > 5)' "$here/../userland/mqtt-stage12/doorview-mqtt.c"
 
 echo '== install.sh =='
 

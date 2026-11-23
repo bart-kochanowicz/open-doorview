@@ -62,7 +62,9 @@ Since the camera sleeps between events, every wake-up starts Majestic in day mod
 
 `autoNightGain: 16` (night at 16x gain), `autoDayGain: 4` (day again at 4x or less), `autoNightDelay: 1` and `monitorDelay: 1` (seconds) make Majestic decide from the gain within its first second. **Observed on the unit:** tested first with a RAM-only bind mount of the file, then written to `/etc/majestic.yaml` after two identical overlay reads; after a Majestic restart in the dark the IR pin went high 3.1 s after the start and stayed high (27 s watched), and the picture was black and white and readable. The first picture of a wake-up still came before the switch (Majestic answers before it has measured the light); stage 13 makes the daemon wait for night mode (`night_wait_ms`, see the [install guide, step 18](install-guide.md#step-18-optional-stage-13-the-night-picture-after-a-wake-up)). The day threshold of 4x is a guess: the gain in daylight at the door was not measured, and the gain with the IR LEDs lit is lower than without them (Majestic checks day with the lamp down, `night_probe_*` in `/metrics`).
 
-## Not solved
+## Earlier problems (2026-11-21), kept for the record
+
+Most of this no longer applies: since stage 7 the motion comes from the PIR and Majestic's video motion detector is off, so the noise of the picture in the dark cannot cause motion any more; since 2026-11-23 the camera goes to night by itself (above), and the picture is 960 × 540 at quality 55. What is still open is listed under [Still open](#still-open).
 
 ### Motion detection in the dark (measured 2026-11-21, observed on the unit)
 
@@ -88,7 +90,8 @@ What is left, none tried yet (the noise profile and `slowShutter` above are done
 
 Night pictures are noisier and larger (215 to 326 KB at `qfactor=60` and 1920 × 1080 in that dim room) and took up to 7 s to send. The unit now requests `snapshot_path=/image.jpg?qfactor=45` from `mqtt.conf`; measured on the same dim scene: 228 KB at 60, 181 KB at 45, 164 KB at 40. The daemon refuses a picture above 320 KB.
 
-### Other
+## Still open
 
-- The night notification was exercised once (the notification automation ran at 16:50 and 16:58, with a 215 KB and a nearly black 39 KB picture); a clean test, with the lens uncovered and more than a minute of waiting before the wave, was not done.
-- The IR LEDs stay on for the whole night; power draw and heat were not measured.
+- **The day threshold** (`autoDayGain: 4`) is a guess: the gain in daylight at the door was not measured.
+- **The night picture after a real wake-up** was seen once (2026-11-23): IR-lit, but still in colour with a violet cast, because Majestic switches the IR-cut filter and the LEDs before the picture settings; waiting for `picture_night` as well (in `/metrics/night`) would give the grey picture at the cost of a little more time.
+- **The IR LEDs** stay on while the camera is awake at night; their power draw was not measured, and with the sleep the camera is awake only for short windows.

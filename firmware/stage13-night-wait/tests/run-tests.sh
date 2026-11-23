@@ -99,7 +99,7 @@ echo '== the files =='
 
 check 'the old daemon is the file the installer pins' test "$(digest "$old_daemon")" = 8332cad1353630d9b0c898e406a4feab061b31a35a34b62ce249d9679bec50cc
 check 'the new daemon is the build recorded in EXPECTED-BUILDS.txt' grep -q "^$(digest "$here/payload/etc/doorview/doorview-mqtt")  doorview-mqtt " "$here/../EXPECTED-BUILDS.txt"
-check 'the daemon source reads night_wait_ms' grep -q 'str_eq(line, "night_wait_ms")' "$here/../userland/mqtt/doorview-mqtt.c"
+check 'the daemon source reads night_wait_ms' grep -q 'str_eq(line, "night_wait_ms")' "$here/../userland/mqtt/parts/config.c"
 
 echo '== install.sh =='
 

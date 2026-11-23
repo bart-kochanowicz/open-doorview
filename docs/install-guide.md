@@ -12,6 +12,12 @@ Read [Before you start](#before-you-start) completely. **Flashing replaces the f
 | 1. Wi-Fi base | Station mode on the Wi-Fi coprocessor, static IPv4, `dv0` interface | Installed on one unit; stream decoded for 300 s at 5.03 fps; the installer for this repository was written afterwards and is tested only on fixture trees |
 | 2. LCD + button | Front button lights the panel with a 30 s live preview; IRQ-driven SDIO receive | Installed on one unit; four of four button tests, cold start with the battery disconnected |
 | 3. MQTT | Battery, external power, button event and uptime for Home Assistant | Installed on one unit; connects to a broker with authentication; observed for minutes and two reboots |
+| 4 to 6. Sleep | The factory power cycle: the camera sleeps after 60 s without activity and wakes by the PIR, the power button or the front button; the coprocessor's own 5-minute timer is off | Installed on one unit; the unattended cycle ran many times on 2026-11-23 |
+| 7. PIR motion | The PIR is the motion source; Majestic's video motion detector off | Installed on one unit |
+| 8 to 10. Fast start | A leaner `rcS`, no audio modules, the daemon right after the Wi-Fi link: Majestic 6.1 s and the broker 5.6 s after the U-Boot banner | Installed on one unit; measured on 2026-11-23 |
+| 11. Wake preview | The LCD preview after a front-button wake-up | Installed on one unit; **not checked yet** |
+| 12. PIR high | The factory app's highest PIR sensitivity (5) | Installed on one unit; every walk into the picture was seen |
+| 13. Night picture | The wake-up picture waits for night mode in the dark | Installed on one unit; an IR-lit picture after a real wake-up in the dark |
 
 One camera was used throughout. Other units, batches or firmware revisions are untested. See [known limits](known-limits.md) before relying on any of it.
 
@@ -188,6 +194,10 @@ cd /tmp/doorview-upload && sh install.sh .       # prints MQTT_INSTALLED
 Create the broker settings locally in a file of mode 600 (`host=`, `port=`, `user=`, `password=`, `gateway=` when the broker is in another subnet, and `motion=1` for the optional motion sensor, which also needs `motionDetect` enabled in `/etc/majestic.yaml`; see [Motion](mqtt-home-assistant.md#motion); and `snapshot=1` to publish a picture when motion starts, see [Snapshot](mqtt-home-assistant.md#snapshot)), upload it with the same silent upload, run `sh configure.sh <file>` (prints `MQTT_CONFIGURED`), delete the local copy, and reboot. Check `cat /tmp/doorview-mqtt.log` and the new device in Home Assistant.
 
 Rollback: upload the same package again and run `sh rollback.sh` from it. It restores the stage 2 driver from the copy the installer kept and removes the daemon and its hook; `mqtt.conf` (credentials) stays until you delete it.
+
+## Optional stages
+
+Steps 9 to 18 install stages 4 to 13, in this order: each installer pins the exact files the stage before it left, and refuses anything else. Back up the overlay before each one (step 5).
 
 ## Step 9 (optional). Stage 4: drivers for the factory power cycle
 

@@ -149,7 +149,7 @@ While the camera sleeps, every entity of the device is unavailable in Home Assis
 
 It opens `/dev/kmsg` and parses the `doorview_control` and `doorview_power` lines the stage 3 network driver writes ([coprocessor](wifi-companion.md#control-frames-from-the-mcu)). Because it needs the `doorview_power` line, stage 3 replaces the stage 2 driver with a build that adds it; the button line the LCD service matches is unchanged. A single poll loop handles the kernel log, the socket and the timers; connecting is non-blocking. The motion poll is a short exchange on its own socket (bounded to 300 ms, stopped as soon as the line is complete), so a slow Majestic cannot stall the MQTT connection for long. The daemon pings the broker when it has heard nothing for half the keepalive, even while it is publishing: the broker acknowledges nothing the daemon publishes, so a daemon that publishes often would otherwise declare the broker dead (found by the motion tests).
 
-Source: `firmware/userland/mqtt/` (`doorview-mqtt.c` is the logic; `sys-arm.c` is a raw-syscall layer for the camera; `sys-host.c` is a POSIX layer used only by the tests).
+Source: `firmware/userland/mqtt/`. `doorview-mqtt.c` is the main loop and the configuration structure; it includes the logic from `parts/` by topic (`config`, `mqtt`, `state`, `motion`, `snapshot`, `live`, `kmsg`, `watchdog`, `connection`, `sleep`), so the daemon is one translation unit. `sys-arm.c` is a raw-syscall layer for the camera; `sys-host.c` is a POSIX layer used only by the tests.
 
 ## Known limits
 

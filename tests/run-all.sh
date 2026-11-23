@@ -12,24 +12,17 @@ run() {
     fi
 }
 
-run firmware/stage1-wifi/tests/run-tests.sh
-run firmware/stage2-lcd/tests/run-tests.sh
-run firmware/stage3-mqtt/tests/run-tests.sh
-run firmware/stage4-sleep/tests/run-tests.sh
-run firmware/stage5-sleep-daemon/tests/run-tests.sh
-run firmware/stage6-wake-timer/tests/run-tests.sh
-run firmware/stage7-pir-motion/tests/run-tests.sh
-run firmware/stage8-fast-boot/tests/run-tests.sh
-run firmware/stage9-lean/tests/run-tests.sh
-run firmware/stage10-early-daemon/tests/run-tests.sh
-run firmware/stage11-wake-preview/tests/run-tests.sh
-run firmware/stage12-pir-high/tests/run-tests.sh
-run firmware/stage13-night-wait/tests/run-tests.sh
+# Every stage, in order (stage1-wifi, stage2-lcd, ..., stage13-night-wait).
+for suite in $(cd "$here" && ls -d firmware/stage*/tests/run-tests.sh | sort -V); do
+    run "$suite"
+done
 run tools/tests/run-tests.sh
 if command -v docker > /dev/null 2>&1 && docker info > /dev/null 2>&1; then
     run firmware/userland/mqtt/tests/run-tests.sh
+    echo "=== tools/format.sh --check ==="
+    sh "$here/tools/format.sh" --check || failed=1
 else
-    echo "=== firmware/userland/mqtt/tests/run-tests.sh: skipped (Docker is not available) ==="
+    echo "=== firmware/userland/mqtt/tests/run-tests.sh and tools/format.sh --check: skipped (Docker is not available) ==="
 fi
 
 [ "$failed" -eq 0 ] && echo 'all suites passed' || echo 'SOME SUITES FAILED'

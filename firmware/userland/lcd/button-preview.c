@@ -53,10 +53,10 @@ static long start_preview(void)
 {
     long pid = call(__NR_fork, 0, 0, 0, 0);
     if (pid == 0) {
-        static char *const args[] = {"sh", "/tmp/lcd-vo-test/live-30.sh", NULL};
-        static char *const env[] = {"PATH=/usr/sbin:/usr/bin:/sbin:/bin", NULL};
-        long log = call(__NR_open, (long)"/tmp/lcd-vo-test/button-preview-last.log",
-                        O_WRONLY | O_CREAT | O_TRUNC, 0600, 0);
+        static char *const args[] = { "sh", "/tmp/lcd-vo-test/live-30.sh", NULL };
+        static char *const env[] = { "PATH=/usr/sbin:/usr/bin:/sbin:/bin", NULL };
+        long log =
+            call(__NR_open, (long)"/tmp/lcd-vo-test/button-preview-last.log", O_WRONLY | O_CREAT | O_TRUNC, 0600, 0);
         if (log >= 0) {
             call(__NR_dup2, log, 1, 0, 0);
             call(__NR_dup2, log, 2, 0, 0);
@@ -71,8 +71,7 @@ static long start_preview(void)
 
 static int watch(void)
 {
-    long lock = call(__NR_open, (long)"/tmp/lcd-vo-test/button-preview.lock",
-                     O_CREAT | O_RDWR | O_CLOEXEC, 0600, 0);
+    long lock = call(__NR_open, (long)"/tmp/lcd-vo-test/button-preview.lock", O_CREAT | O_RDWR | O_CLOEXEC, 0600, 0);
     if (lock < 0 || call(__NR_flock, lock, LOCK_EX | LOCK_NB, 0, 0) < 0) {
         LOG("Button preview lock unavailable\n");
         return 1;
