@@ -6,6 +6,9 @@
  * snapshot=1 it publishes a JPEG from Majestic when motion starts, so Home Assistant never has to reach the camera.
  * With live=1 it subscribes to doorview/<node>/live/set and, on ON, publishes small pictures to doorview/<node>/live for
  * live_seconds (a slide show on demand); OFF or the time running out ends it.
+ * With pir_motion=1 the PIR (switched on by the daemon; pir_sensitivity=1..3) is the motion source while the camera is awake
+ * too: an alarm start in the kernel log is a motion edge with a snapshot, and motion_video=0 stops polling Majestic's video
+ * motion detector.
  * With sleep_after=<seconds> it puts the camera to sleep, like the factory firmware, when nothing has happened for that
  * long: it switches the PIR on, syncs and asks the syslink driver for the standby (see docs/factory-firmware.md); a PIR
  * wake-up (reason "pir" in the syslink_poll parameter) is reported as motion with a snapshot, so Home Assistant sees it.
@@ -64,6 +67,9 @@ struct config {
     int sleep_after;
     int sleep_usb;
     int wake_timer;
+    int motion_video;
+    int pir_motion;
+    int pir_sensitivity;
     char reason_file[128];
     char mcu_parameter[128];
     char standby_parameter[128];
@@ -303,6 +309,7 @@ static int load_config(const char *path)
     cfg.port = 1883;
     cfg.keepalive = 60;
     cfg.motion_port = 80;
+    cfg.motion_video = 1;
     cfg.motion_hold = 10;
     cfg.motion_window = 3;
     cfg.live_seconds = 30;
@@ -455,6 +462,14 @@ static int load_config(const char *path)
             if (!parse_number(value, &number) || (number != 0 && (number < 10 || number > 3600)))
                 return -23;
             cfg.sleep_after = number;
+        } else if (str_eq(line, "motion_video")) {
+            cfg.motion_video = str_eq(value, "1");
+        } else if (str_eq(line, "pir_motion")) {
+            cfg.pir_motion = str_eq(value, "1");
+        } else if (str_eq(line, "pir_sensitivity")) {
+            if (!parse_number(value, &number) || number < 0 || number > 3)
+                return -27;
+            cfg.pir_sensitivity = number;
         } else if (str_eq(line, "wake_timer")) {
             if (!parse_number(value, &number) || number < 0 || number > 604800)
                 return -26;
@@ -478,6 +493,8 @@ static int load_config(const char *path)
     }
     if (cfg.snapshot && !cfg.motion)
         return -14; /* the snapshot is taken when motion starts */
+    if (cfg.pir_motion && !cfg.motion)
+        return -28; /* a PIR alarm is reported as the motion entity */
     if (cfg.sleep_after && !cfg.snapshot)
         return -25; /* a wake-up is reported as motion with a snapshot */
     return have_host ? 0 : -8;
@@ -998,7 +1015,15 @@ static void poll_motion(u32 now)
 
     if (!cfg.motion)
         return;
-    update_motion(now);
+    if (cfg.motion_video) {
+        update_motion(now);
+    } else {
+        /* Only the PIR reports motion: just let the hold run out. */
+        if (motion_state < 0)
+            motion_state = 0;
+        if (motion_state == 1 && (int)(now - motion_until_ms) >= 0)
+            motion_state = 0;
+    }
     if (motion_state != previous)
         dirty_motion = 1;
     if (motion_state == 1)
@@ -1236,11 +1261,19 @@ static int hex_value(char c)
     return -1;
 }
 
+static int pir_alarm_pending;
+
+/* "doorview_power: command=03 ... payload=01" is the start of a movement, 00 its end. */
 static void handle_pir_line(const char *line, int length)
 {
+    const char *payload;
+
     if (replaying || !find_text(line, length, "doorview_power: command=03 "))
         return;
     activity_seen = 1;
+    payload = find_text(line, length, "payload=");
+    if (cfg.pir_motion && payload && payload + 10 <= line + length && payload[8] == '0' && payload[9] == '1')
+        pir_alarm_pending = 1;
 }
 
 static void handle_power_line(const char *line, int length)
@@ -1614,17 +1647,23 @@ static void read_wake_reason(void)
     wake_pir_pending = str_eq(reason, "pir");
 }
 
-/* A PIR wake-up is motion that happened before Linux was up: report it once, with a snapshot, as a normal edge. */
-static void report_wake_motion(u32 now)
+/* A PIR wake-up (motion before Linux was up) or alarm (while awake) is a motion edge with a snapshot; one that arrives
+ * while motion is already reported only extends the hold. */
+static void report_pir_motion(u32 now)
 {
+    int edge = motion_state != 1;
+
     wake_pir_pending = 0;
+    pir_alarm_pending = 0;
     motion_state = 1;
     motion_until_ms = now + (u32)cfg.motion_hold * 1000u;
-    dirty_motion = 1;
-    if (cfg.snapshot) {
-        snapshot_pending = 1;
-        snapshot_due_ms = now + (u32)cfg.snapshot_delay_ms;
-        snapshot_deadline_ms = now + SNAPSHOT_PENDING_MS;
+    if (edge) {
+        dirty_motion = 1;
+        if (cfg.snapshot) {
+            snapshot_pending = 1;
+            snapshot_due_ms = now + (u32)cfg.snapshot_delay_ms;
+            snapshot_deadline_ms = now + SNAPSHOT_PENDING_MS;
+        }
     }
     last_activity_ms = now;
 }
@@ -1633,7 +1672,7 @@ static int sleep_blocked(void)
 {
     int fd;
 
-    if (live_active || snapshot_pending || motion_state == 1 || pending_buttons > 0 || wake_pir_pending)
+    if (live_active || snapshot_pending || motion_state == 1 || pending_buttons > 0 || wake_pir_pending || pir_alarm_pending)
         return 1;
     if (dirty_battery || dirty_status || dirty_usb || dirty_motion || dirty_live)
         return 1;
@@ -1664,6 +1703,40 @@ static void wake_timer_text(int seconds, char *text)
     }
     text[10] = '\n';
     text[11] = 0;
+}
+
+/* The text for the mcu parameter that sets the PIR sensitivity: 79 and the level in the high byte of a u16. */
+static void pir_sensitivity_text(int level, char *text)
+{
+    text[0] = '7';
+    text[1] = '9';
+    text[2] = '0';
+    text[3] = '0';
+    text[4] = '0';
+    text[5] = (char)('0' + level);
+    text[6] = '\n';
+    text[7] = 0;
+}
+
+/* The sensitivity (when set) and the PIR on, written to the mcu parameter once the connection is up. */
+static int pir_setup_done;
+
+static void pir_setup(void)
+{
+    char text[8];
+
+    pir_setup_done = 1;
+    if (cfg.pir_sensitivity) {
+        pir_sensitivity_text(cfg.pir_sensitivity, text);
+        if (write_text(cfg.mcu_parameter, text) < 0)
+            logmsg("PIR sensitivity refused by the driver");
+        sys_wait(-1, -1, 0, (int)SLEEP_PIR_SETTLE_MS);
+    }
+    if (write_text(cfg.mcu_parameter, "780100\n") < 0)
+        logmsg("PIR switch refused by the driver");
+    else
+        logmsg("PIR is on");
+    sys_wait(-1, -1, 0, (int)SLEEP_PIR_SETTLE_MS);
 }
 
 /* The factory order: wake timer, PIR on, sync, then the driver sends 8a:77 07 and 9a:03 and answers the coprocessor's 0xa0.
@@ -1701,6 +1774,14 @@ static void maybe_sleep(u32 now)
         wake_timer_text(cfg.wake_timer, timer);
         if (write_text(cfg.mcu_parameter, timer) < 0)
             logmsg("wake timer refused by the driver: the coprocessor keeps its own timer");
+        sys_wait(-1, -1, 0, (int)SLEEP_PIR_SETTLE_MS);
+    }
+    if (cfg.pir_sensitivity) {
+        char level[8];
+
+        pir_sensitivity_text(cfg.pir_sensitivity, level);
+        if (write_text(cfg.mcu_parameter, level) < 0)
+            logmsg("PIR sensitivity refused by the driver");
         sys_wait(-1, -1, 0, (int)SLEEP_PIR_SETTLE_MS);
     }
     if (write_text(cfg.mcu_parameter, "780100\n") < 0) {
@@ -1804,8 +1885,10 @@ int app_main(const char *config_path)
                 link_fail("publish failed");
                 break;
             }
-            if (wake_pir_pending)
-                report_wake_motion(now);
+            if (wake_pir_pending || pir_alarm_pending)
+                report_pir_motion(now);
+            if (cfg.pir_motion && !pir_setup_done)
+                pir_setup();
             if (snapshot_pending && (int)(now - snapshot_due_ms) >= 0) {
                 int expired = (int)(now - snapshot_deadline_ms) >= 0;
                 int cooling = have_snapshot && now - last_snapshot_ms < (u32)cfg.snapshot_cooldown * 1000u;

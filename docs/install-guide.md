@@ -230,6 +230,32 @@ cd /tmp/doorview-upload && sh install.sh .       # prints TIMER_INSTALLED
 
 The new driver loads at the next cold start (after the next sleep); to try it without one, load it into the running camera as described in [factory firmware](factory-firmware.md). Rollback: upload the package again and run `sh rollback.sh`.
 
+## Step 12 (optional). Stage 7: the PIR as the motion source
+
+Replaces the MQTT daemon with the build that supports `pir_motion=1` (an alarm start from the PIR while the camera is awake is a motion edge with a snapshot, like a PIR wake-up; the daemon switches the PIR on at start), `pir_sensitivity=1..3` (written before the PIR is switched on; leave it out to keep what the coprocessor has) and `motion_video=0` (Majestic's video motion detector is not polled). All three are off by default. Needs stage 6; touches no other file. Together with `motionDetect: enabled: false` in `/etc/majestic.yaml` this ends the "motion" events that the video detector invented (lights, shadows) and that kept the camera awake.
+
+```sh
+tools/package.sh stage7-pir-motion
+python3 tools/upload-archive.py build/packages/stage7-pir-motion.tar.gz "$DOORVIEW_PW"
+# on the camera:
+cd /tmp/doorview-upload && sh install.sh .       # prints PIR_DAEMON_INSTALLED
+```
+
+Rollback: upload the package again and run `sh rollback.sh`.
+
+## Step 13 (optional). Stage 8: a faster start
+
+Replaces three start-up scripts: `/etc/init.d/rcS` (skips the system and kernel log, the random seed, the fake hardware clock, mdev, NTP, cron and the tunnels, and starts the Wi-Fi link and the camera stack side by side; a failsafe boot is the stock one), `S39doorview` and `S41doorview-network` (they poll every 0.1 s instead of sleeping a fixed second). Measured on the unit on 2026-11-23: Majestic started 8.9 s after the U-Boot banner instead of 11.4 s. Needs stages 1 to 3; expects exactly the shipped scripts and the stock `rcS`. Nothing else changes, but **the camera no longer keeps a system log (`logread` is empty) and runs no NTP**: the clock is whatever the RTC says. SSH (dropbear) still starts, in the background.
+
+```sh
+tools/package.sh stage8-fast-boot
+python3 tools/upload-archive.py build/packages/stage8-fast-boot.tar.gz "$DOORVIEW_PW"
+# on the camera:
+cd /tmp/doorview-upload && sh install.sh .       # prints FAST_BOOT_INSTALLED
+```
+
+The old scripts are kept as `/etc/doorview/<name>.before-fast` (not in `/etc/init.d`, where the stock `rcS` would run them). Rollback: upload the package again and run `sh rollback.sh`; it writes the stock `rcS` back as a file. If the camera does not come up after a cold start, log in on the UART during a boot window and run the same rollback, or `cp /etc/doorview/rcS.before-fast /etc/init.d/rcS` and the same for the other two scripts.
+
 ## Verification checklist
 
 - [ ] Console shows `U-Boot 2022.10` and `Linux version 4.9.37`.

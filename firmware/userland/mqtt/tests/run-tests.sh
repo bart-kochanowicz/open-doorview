@@ -898,14 +898,14 @@ echo '-- another wake-up reason: no motion, but the same sleep'
 start_sleep_daemon poweron "$work/kmsg-battery"
 check 'a power-on wake-up is logged' wait_for "$work/daemon-sleep.log" 'wake-up reason: poweron' 5
 sleep_s 2
-check_not 'it publishes no motion ON' grep -q '|motion|ON' "$sleep_log"
+check_not 'it publishes no motion ON' grep -q '/motion|ON' "$sleep_log"
 check 'it still sleeps after the idle time' wait_sleep 20
 kill_daemon
 
 echo '-- no wake-up reason file: a normal start'
 start_sleep_daemon "" "$work/kmsg-battery"
 sleep_s 2
-check_not 'no motion is invented' grep -q '|motion|ON' "$sleep_log"
+check_not 'no motion is invented' grep -q '/motion|ON' "$sleep_log"
 kill_daemon
 
 echo '-- on a charger the camera stays awake unless sleep_usb=1'
@@ -952,6 +952,77 @@ kill_daemon
 start_sleep_daemon poweron "$work/kmsg-battery" "mcu_parameter=$work/no-such-directory/mcu"
 check 'a PIR switch that cannot be written stops the sleep before the standby' wait_for "$work/daemon-sleep.log" 'sleep refused: cannot switch the PIR on' 20
 check_not 'and no standby is written' sleeping
+kill_daemon
+
+echo '== PIR motion =='
+# With pir_motion=1 the PIR is the motion source while the camera is awake: the daemon switches it on (and sets the
+# sensitivity), an alarm start in the kernel log is a motion edge with one snapshot, an alarm end is nothing, and with
+# motion_video=0 Majestic's video detector is not polled at all.
+kill_daemon
+pir_seq=500
+printf '6,300,1000000,-;doorview_power: command=a2 count=44 length=12 head=8a a2 01 01 00 00 0c 00 payload=02 00 63 00\n' > "$work/kmsg-pir"
+printf '6,301,1000100,-;doorview_power: command=03 count=41 length=9 head=8a 03 01 01 00 00 09 00 payload=01\n' >> "$work/kmsg-pir"
+pir_line() { # <01 = alarm start, 00 = alarm end>
+    pir_seq=$((pir_seq + 1))
+    printf '6,%d,%d,-;doorview_power: command=03 count=41 length=9 head=8a 03 01 01 00 00 09 00 payload=%s\n' "$pir_seq" "$((2000000 + pir_seq * 1000))" "$1" >> "$work/kmsg-pir"
+}
+start_pir_daemon() { # <extra config lines, separated by \n>
+    : > "$work/mcu"; : > "$work/standby"; : > "$work/reason"; : > "$sleep_log"; : > "$work/snap.log"
+    { cat "$work/mqtt.conf"; printf 'kmsg=%s/kmsg-pir\nmotion=1\nmotion_port=%s\nmotion_hold=2\nsnapshot=1\nsnapshot_cooldown=1\npir_motion=1\nmotion_video=0\nreason_file=%s/reason\nmcu_parameter=%s/mcu\nstandby_parameter=%s/standby\nstay_awake_file=%s/stay\n%b\n' "$work" "$motion_port" "$work" "$work" "$work" "$work" "${1:-}"; } > "$work/mqtt-pir.conf"
+    "$work/doorview-mqtt-asan" "$work/mqtt-pir.conf" > "$work/daemon-pir.log" 2>&1 &
+    daemon_pir_pid=$!
+    daemon_pid=$daemon_pir_pid
+}
+snap_total_lines() { wc -l < "$work/snap.log" | tr -d ' '; }
+hits_now() { wc -l < "$work/mj/hits" | tr -d ' '; }
+
+echo '-- the PIR is switched on with the sensitivity, and an alarm in the history is ignored'
+: > "$work/mj/hits"
+hits_before=$(hits_now)
+start_pir_daemon 'pir_sensitivity=2\nmotion_hold=3'
+check 'the daemon says that the PIR is on' wait_for "$work/daemon-pir.log" 'PIR is on' 8
+check 'the sensitivity is written first (level 2 in the high byte), then the PIR on' test "$(cat "$work/mcu")" = "$(printf '790002\n780100')"
+sleep_s 2
+check_not 'an alarm that is only in the replayed history is ignored' grep -q '/motion|ON' "$sleep_log"
+check 'the motion state is OFF from the start' wait_for "$sleep_log" '|doorview/front-door-camera/motion|OFF' 5
+check 'with motion_video=0 Majestic'"'"'s motion counter is never polled' test "$(hits_now)" = "$hits_before"
+
+echo '-- an alarm start is a motion edge with one snapshot'
+pir_line 01
+check 'an alarm start publishes motion ON' wait_for "$sleep_log" '|doorview/front-door-camera/motion|ON' 6
+check 'and one picture' test "$(for i in $(seq 1 60); do [ "$(snap_total_lines)" -ge 1 ] && echo 1 && break; sleep_s 0.1; done)" = 1
+check 'the picture is the one Majestic served' test "$(tail -n 1 "$work/snap.log" | cut -d'|' -f3)" = "$(cat "$work/mj/img.hex")"
+# Two more alarms, each inside the hold (3 s) of the one before: without the hold being extended the second one would
+# arrive after the motion had ended and be a new edge.
+sleep_s 1.5
+pir_line 01
+sleep_s 1.5
+pir_line 01
+sleep_s 1
+check 'alarms inside the hold only extend it: no second ON' test "$(grep -c '/motion|ON' "$sleep_log")" = 1
+check 'and no second picture' test "$(snap_total_lines)" = 1
+pir_line 00
+check 'an alarm end is not a motion start (no second ON)' test "$(grep -c '/motion|ON' "$sleep_log")" = 1
+check 'motion goes OFF after the hold' test "$(for i in $(seq 1 60); do [ "$(grep -c '/motion|OFF' "$sleep_log")" -ge 2 ] && echo ok && break; sleep_s 0.1; done)" = ok
+sleep_s 1.5
+pir_line 01
+check 'a second alarm after the hold is a new edge' test "$(for i in $(seq 1 60); do [ "$(grep -c '/motion|ON' "$sleep_log")" -ge 2 ] && echo ok && break; sleep_s 0.1; done)" = ok
+check_not 'the sanitizers report nothing' grep -qE 'AddressSanitizer|runtime error' "$work/daemon-pir.log"
+kill_daemon
+
+echo '-- without pir_motion an alarm is only activity'
+start_pir_daemon 'pir_motion=0'
+sleep_s 2
+pir_line 01
+sleep_s 3
+check_not 'no motion is reported' grep -q '/motion|ON' "$sleep_log"
+check_not 'and the PIR is not switched on by the daemon' test -s "$work/mcu"
+kill_daemon
+
+echo '-- the sleep writes the timer, the sensitivity and the PIR again'
+start_pir_daemon 'sleep_after=10\nsleep_usb=1\npir_sensitivity=3'
+check 'it sleeps after the idle time' wait_sleep 25
+check 'the writes are: sensitivity, PIR on (start), then timer off, sensitivity, PIR on (sleep)' test "$(cat "$work/mcu")" = "$(printf '790003\n780100\n7b00000000\n790003\n780100')"
 kill_daemon
 
 echo '== configuration =='
@@ -1044,6 +1115,10 @@ check 'motion_settle above 600 and negative are rejected' test "$(config_exit 'h
 
 grep -qE 'AddressSanitizer|runtime error' "$work/daemon-sleep.log" 2> /dev/null && touch "$work/sleep-sanitizer"
 check_not 'the sanitizers report nothing during the sleep tests' test -e "$work/sleep-sanitizer"
+
+check 'pir_sensitivity above 3 is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\npir_motion=1\npir_sensitivity=4\n')" = 2
+check 'pir_motion without motion=1 is rejected' test "$(config_exit 'host=127.0.0.1\npir_motion=1\n')" = 2
+check 'a valid PIR configuration is accepted' test "$(config_exit 'host=127.0.0.1\nmotion=1\npir_motion=1\nmotion_video=0\npir_sensitivity=2\n')" = 3
 
 echo '-- configuration of the sleep keys'
 check 'sleep_after below 10 seconds is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=5\n')" = 2
