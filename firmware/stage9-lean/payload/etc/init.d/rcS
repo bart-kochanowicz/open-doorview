@@ -1,0 +1,32 @@
+#!/bin/sh
+# Faster start for the door camera. The services this camera does not use (system and kernel log, random seed, the
+# fake hardware clock, mdev, NTP, cron, the tunnels, zram swap and the SSH server) are skipped, and the Wi-Fi link
+# and the camera stack come up side by side. Everything else keeps the stock order. A failsafe boot is the stock one.
+export SENSOR=$(fw_printenv -n sensor)
+export UPGRADE=$(fw_printenv -n upgrade)
+[ -r /etc/TZ ] && export TZ=$(cat /etc/TZ)
+
+if grep -qw failsafe /proc/cmdline 2>/dev/null && [ -x /usr/sbin/failsafe-rescue ]; then
+	/usr/sbin/failsafe-rescue
+	exit 0
+fi
+
+start() {
+	[ -f "/etc/init.d/$1" ] && "/etc/init.d/$1" start
+}
+
+start S02sysctl
+start S30customizer
+start S31hostname
+# The Wi-Fi handshake with the coprocessor is timing sensitive: nothing else runs while it starts.
+start S39doorview
+# The camera stack loads while the Wi-Fi link is brought up.
+( start S70vendor; start S95majestic ) &
+camera=$!
+start S40network
+start S41doorview-network
+wait "$camera"
+start S96doorview-lcd
+# The daemon adds the default route, which needs the Wi-Fi link: it starts after both.
+start S97doorview-mqtt
+start S99rc.local

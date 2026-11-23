@@ -1,0 +1,408 @@
+#!/bin/sh
+
+CHIP_TYPE=$(ipcinfo --chip-name)
+
+if [ "$CHIP_TYPE" == "gk7205v210" ]; then
+  CHIP_TYPE=gk7205v200
+fi
+
+mem_start=0x40000000 # phy mem start
+proc_cmdline=${LOAD_GOKE_CMDLINE:-/proc/cmdline}
+
+goke_mem=${LOAD_GOKE_MEM:-/sys/module/goke_mem/parameters}
+kernel_alloc=$(cat "$goke_mem/allocator" 2>/dev/null)
+if [ -n "$kernel_alloc" ]; then
+	mem_total=$(cat "$goke_mem/dram")
+	os_mem_size=$(cat "$goke_mem/osmem")
+	kernel_mmz=$(cat "$goke_mem/mmz")
+else
+	mem_total=$(fw_printenv -n totalmem | tr -d 'M')
+	mem_total=${mem_total:=64}
+
+	os_mem_size=$(fw_printenv -n osmem | tr -d 'M')
+	os_mem_size=${os_mem_size:=32}
+fi
+
+BOARD=demo
+YUV_TYPE0=0 # 0 -- raw, 1 --DC, 2 --bt1120, 3 --bt656
+
+SYSCFG_CHIP=$CHIP_TYPE
+if [ "$(fw_printenv -n sensor_dvp 2>/dev/null)" = "1" ]; then
+	YUV_TYPE0=1
+	if [ "$CHIP_TYPE" = "gk7202v300" ]; then
+		SYSCFG_CHIP=gk7205v200
+	fi
+fi
+
+cd /lib/modules/$(uname -r)/goke/
+
+
+
+
+
+
+
+
+report_error() {
+	echo "******* Error: There's something wrong, please check! *****"
+	exit 1
+}
+
+check_allocator() {
+	allocator=$(grep mmz_allocator $proc_cmdline)
+	if [ -z "${allocator}" ]; then
+		if [ ${mem_total} -ge 128 ]; then
+			set_allocator cma
+		else
+			set_allocator gk
+		fi
+	elif grep -q "mmz_allocator=cma" $proc_cmdline && \
+		[ -n "$(fw_printenv -n osmem 2>/dev/null)" ] && \
+		[ -n "$(fw_printenv -n totalmem 2>/dev/null)" ]; then
+		booted=$(awk -F '=' '$1=="mmz"{print $2}' RS=" " $proc_cmdline)
+		wanted=$(set_allocator mmz)
+		if [ -n "${wanted}" ] && [ "${booted}" != "${wanted}" ]; then
+			have=$(echo "${booted}" | awk -F ',' '{print $4+0}')
+			want=$(echo "${wanted}" | awk -F ',' '{print $4+0}')
+			if [ "${want}" -gt "${have}" ]; then
+				echo "MMZ zone ${booted} does not follow totalmem/osmem (${wanted}); bootargs corrected, the zone follows at the next boot"
+				set_allocator cma >/dev/null
+			else
+				echo "MMZ zone ${booted} is larger than totalmem/osmem give (${wanted}); left as it is -- run set_allocator cma to apply it"
+			fi
+		fi
+	fi
+}
+
+insert_osal() {
+	[ -n "$kernel_alloc" ] || check_allocator
+	modprobe open_osal $osal_args || report_error
+}
+
+insert_detect() {
+	modprobe open_sys_config chip=$SYSCFG_CHIP sensors=unknown g_cmos_yuv_flag=$YUV_TYPE0 board=$BOARD
+	insert_osal
+	insmod gk7205v200_base.ko
+	modprobe open_isp
+	modprobe open_sensor_i2c
+	modprobe open_sensor_spi
+}
+
+remove_detect() {
+	rmmod -w open_sensor_spi
+	rmmod -w open_sensor_i2c
+	rmmod -w open_isp
+	rmmod -w open_base
+	rmmod -w open_osal >/dev/null 2>&1
+	rmmod -w open_sys_config
+}
+
+insert_audio() {
+	insmod gk7205v200_aio.ko
+	insmod gk7205v200_ai.ko
+	insmod gk7205v200_ao.ko
+	insmod gk7205v200_aenc.ko
+	insmod gk7205v200_adec.ko
+	insmod gk7205v200_acodec.ko
+	echo "insert audio"
+}
+
+remove_audio() {
+	rmmod -w open_acodec
+	rmmod -w open_adec
+	rmmod -w open_aenc
+	rmmod -w open_ao
+	rmmod -w open_ai
+	rmmod -w open_aio
+	echo "remove audio"
+}
+
+insert_isp() {
+	modprobe open_isp
+}
+
+insert_sil9024() {
+	i2c_sel=2
+	if [ "$CHIP_TYPE" == "gk7205v300" ]; then
+		i2c_sel=1
+	fi
+
+	if [ "$BOARD" == "sck" ]; then
+		insmod sil9024.ko norm=12 i2c_num=$i2c_sel #1080P@30fps
+	fi
+}
+
+insert_adv7179() {
+	i2c_sel=2
+	if [ "$CHIP_TYPE" == "gk7205v300" ]; then
+		i2c_sel=1
+	fi
+
+	if [ "$BOARD" == "sck" ]; then
+		insmod adv7179.ko norm_mode=0 i2c_num=$i2c_sel # norm_mode = 0:PAL, 1:NTSC
+	fi
+}
+
+insert_isp_piris() {
+	if [ "$CHIP_TYPE" == "gk7605v100" -a "$BOARD" == "demo" ]; then
+		modprobe open_piris
+	fi
+}
+
+insert_ko() {
+	if [ "$SENSOR" == "bt656" ] || [ "$SENSOR" == "jxf23_dc" ]; then
+		YUV_TYPE0=1
+	fi
+	modprobe open_sys_config chip=$SYSCFG_CHIP sensors=$SENSOR g_cmos_yuv_flag=$YUV_TYPE0 board=$BOARD
+	mclk="$(fw_printenv -n sensor_mclk 2>/dev/null)"
+	if [ -n "$mclk" ]; then
+		case "$mclk" in
+			74.25)  mclk_sel=0 ;;
+			72)     mclk_sel=1 ;;
+			54)     mclk_sel=2 ;;
+			24)     mclk_sel=3 ;;
+			37.125) mclk_sel=4 ;;
+			36)     mclk_sel=5 ;;
+			27)     mclk_sel=6 ;;
+			12)     mclk_sel=7 ;;
+			*)      mclk_sel="" ;;
+		esac
+		if [ -z "$mclk_sel" ]; then
+			logger -s -p daemon.err -t goke "sensor_mclk=$mclk is not a supported MCLK (74.25/72/54/24/37.125/36/27/12); leaving the sensor table default"
+		elif ! command -v devmem >/dev/null 2>&1; then
+			logger -s -p daemon.err -t goke "sensor_mclk=$mclk requested but devmem is missing; leaving the sensor table default"
+		else
+			mclk_cur="$(devmem 0x120100F0)"
+			if [ -z "$mclk_cur" ]; then
+				logger -s -p daemon.err -t goke "sensor_mclk=$mclk: could not read PERI_CRG60; leaving the sensor table default"
+			elif ! devmem 0x120100F0 32 $(( (mclk_cur & ~0x3C) | (mclk_sel << 2) )); then
+				logger -s -p daemon.err -t goke "sensor_mclk=$mclk: MCLK write failed; sensor may not produce a usable image"
+			fi
+		fi
+	fi
+	insert_osal
+	insmod gk7205v200_base.ko
+	insmod gk7205v200_sys.ko
+	insmod gk7205v200_rgn.ko
+	insmod gk7205v200_vgs.ko max_vgs_job=20 max_vgs_node=20 max_vgs_task=20
+	insmod gk7205v200_vi.ko
+	insert_isp
+	insmod gk7205v200_vpss.ko
+	insmod gk7205v200_chnl.ko
+	insmod gk7205v200_vedu.ko
+	insmod gk7205v200_rc.ko
+	insmod gk7205v200_venc.ko VencMaxChnNum=3
+	insmod gk7205v200_h264e.ko
+	insmod gk7205v200_h265e.ko
+	insmod gk7205v200_jpege.ko
+	insmod gk7205v200_ive.ko save_power=0
+	modprobe open_pwm
+	modprobe open_sensor_i2c
+	modprobe open_sensor_spi
+	# The door camera has no use for audio (Majestic runs with audio off): its six modules are not loaded.
+	modprobe open_mipi_rx
+	modprobe open_wdt
+
+	if grep -q '/open_adc\.ko:' /lib/modules/$(uname -r)/modules.dep 2>/dev/null; then
+		modprobe open_adc || echo "open_adc failed to load: no /dev/lsadc"
+	fi
+
+	modprobe open_cipher 2>/dev/null || true
+}
+
+remove_ko() {
+	rmmod -w open_cipher 2>/dev/null
+	rmmod open_adc 2>/dev/null
+	rmmod -w open_wdt
+	remove_audio
+	rmmod -w open_mipi_rx
+	rmmod -w open_ive
+	rmmod -w open_rc
+	rmmod -w open_jpege
+	rmmod -w open_h264e
+	rmmod -w open_h265e
+	rmmod -w open_venc
+	rmmod -w open_vedu
+	rmmod -w open_chnl
+	rmmod -w open_vpss
+	rmmod -w open_isp
+	rmmod -w open_vi
+	rmmod -w open_vgs
+	rmmod -w open_rgn
+	rmmod -w open_sensor_i2c &>/dev/null
+	rmmod -w open_sensor_spi &>/dev/null
+	rmmod -w open_pwm
+	rmmod -w open_sys
+	rmmod -w open_base
+	rmmod -w open_osal
+	rmmod -w open_sys_config
+}
+
+load_usage() {
+	echo "Usage:  ./load_goke [-option] [sensor_name]"
+	echo "options:"
+	echo "    -i                       insert modules"
+	echo "    -r                       remove modules"
+	echo "    -a                       remove modules first, then insert modules"
+	echo "    -sensor sensor_name      config sensor type [default: imx307]"
+	echo "    -h                       help information"
+	echo -e "Available sensors: gc2053 imx307 imx327 imx335 os05a sc2231 sc3235 sc4236  etc."
+	echo -e "for example: ./load_goke -i -sensor imx307 -osmem 32M -board demo -yuv0 0\n"
+}
+
+calc_mmz_info() {
+	mmz_start=$(echo "$mem_start $os_mem_size" |
+		awk 'BEGIN { temp = 0; }
+        {
+                temp = $1/1024/1024 + $2;
+        }
+        END { printf("0x%x00000\n", temp); }')
+
+	mmz_size=$(echo "$mem_total $os_mem_size" |
+		awk 'BEGIN { temp = 0; }
+        {
+                temp = $1 - $2;
+        }
+        END { printf("%dM\n", temp); }')
+	echo "mmz_start: $mmz_start, mmz_size: $mmz_size"
+}
+
+b_arg_sensor0=0
+b_arg_sensor1=0
+b_arg_yuv_type0=0
+b_arg_insmod=0
+b_arg_remove=0
+b_arg_os_mem=0
+b_arg_board=0
+
+for arg in $@; do
+	if [ $b_arg_sensor0 -eq 1 ]; then
+		b_arg_sensor0=0
+		SENSOR=$arg
+	fi
+
+	if [ $b_arg_os_mem -eq 1 ]; then
+		b_arg_os_mem=0
+		os_mem_size=$arg
+
+		if [ -z $os_mem_size ]; then
+			echo "[error] os_mem_size is null"
+			exit
+		fi
+	fi
+
+	if [ $b_arg_yuv_type0 -eq 1 ]; then
+		b_arg_yuv_type0=0
+		YUV_TYPE0=$arg
+	fi
+
+	if [ $b_arg_board -eq 1 ]; then
+		b_arg_board=0
+		BOARD=$arg
+	fi
+
+	case $arg in
+	"-i")
+		b_arg_insmod=1
+		;;
+	"-r")
+		b_arg_remove=1
+		;;
+	"-a")
+		b_arg_insmod=1
+		b_arg_remove=1
+		;;
+	"-h")
+		load_usage
+		;;
+	"-sensor0")
+		b_arg_sensor0=1
+		;;
+	"-sensor")
+		b_arg_sensor0=1
+		;;
+	"-osmem")
+		b_arg_os_mem=1
+		;;
+	"-yuv0")
+		b_arg_yuv_type0=1
+		;;
+	"-board")
+		b_arg_board=1
+		;;
+	esac
+done
+
+if [ "$b_arg_insmod" = "1" ]; then
+    modprobe open_hwrng 2>/dev/null
+fi
+
+if [ -n "$kernel_alloc" ]; then
+	echo "Memory laid out by the kernel: DRAM ${mem_total}M, OS ${os_mem_size}M, ${kernel_alloc}"
+	osal_args="anony=1 mmz_allocator=$kernel_alloc mmz=$kernel_mmz"
+else
+	if ! grep -q "mmz_allocator=cma" $proc_cmdline; then
+		booted_mem=$(awk -F '=' '$1=="mem"{print $2+0; exit}' RS=" " $proc_cmdline)
+		if [ -n "${booted_mem}" ] && [ "${booted_mem}" -gt 0 ] && [ "${booted_mem}" != "${os_mem_size}" ]; then
+			echo "osmem ${os_mem_size}M is not what the kernel booted with (mem=${booted_mem}M); laying MMZ out from mem="
+			os_mem_size=${booted_mem}
+		fi
+	fi
+	if [ $os_mem_size -ge $mem_total ]; then
+		echo "[err] os_mem[$os_mem_size], over total_mem[$mem_total]"
+		exit
+	fi
+
+	calc_mmz_info
+	MMZ=$(awk -F '=' '$1=="mmz"{print $2}' RS=" " $proc_cmdline)
+	if [ -z "$MMZ" ]; then
+		osal_args="anony=1 mmz_allocator=gk mmz=anonymous,0,$mmz_start,$mmz_size"
+	else
+		osal_args="anony=1 mmz_allocator=cma mmz=$MMZ"
+	fi
+fi
+echo "osal: $osal_args"
+
+
+if [ $# -lt 1 ]; then
+	load_usage
+	exit 0
+fi
+
+if [ $b_arg_insmod -eq 1 ]; then
+	if [ "$SENSOR" = "unknown" ]; then
+		SENSOR=
+		fw_setenv sensor
+	fi
+
+	if [ -n "$SENSOR" ]; then
+		logger -s -p daemon.info -t goke "SENSOR: ${SENSOR}"
+	else
+		if fw_printenv -n sensor >/dev/null; then
+			export SENSOR=$(fw_printenv -n sensor)
+			logger -s -p daemon.info -t goke "Get data from U-Boot ENV and set SENSOR as ${SENSOR}"
+		else
+			insert_detect
+			SENSOR_DETECT=$(ipcinfo --short-sensor)
+			export SENSOR=${SENSOR_DETECT:=unknown}
+			remove_detect
+			logger -s -p daemon.info -t goke "Get data from ipcinfo and set SENSOR as ${SENSOR}"
+			if [ "$SENSOR" != "unknown" ]; then
+				fw_setenv sensor $SENSOR && logger -s -p daemon.info -t goke "Writing ${SENSOR} to U-Boot ENV"
+			fi
+		fi
+	fi
+fi
+
+if [ $b_arg_remove -eq 1 ]; then
+	remove_ko
+fi
+
+if [ "$SENSOR" = "unknown" ]; then
+	logger -s -p daemon.err -t goke "SENSOR is not detected, aborting..."
+	exit 1
+else
+	if [ $b_arg_insmod -eq 1 ]; then
+		insert_ko
+	fi
+fi
