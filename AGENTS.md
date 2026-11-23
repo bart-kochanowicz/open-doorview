@@ -51,31 +51,36 @@ Private material lives **outside** the repository (flash dumps, overlay backups,
 
 | Milestone | State |
 |---|---|
-| Serial diagnostics, verified SPI backup (two identical reads), firmware analysis | done; the factory restore path was never tested |
+| Serial diagnostics, verified SPI backup (two identical reads), firmware analysis | done; the factory restore path was never tested; the factory RTOS is analysed where it mattered (power cycle, PIR, wake-up reasons; `docs/factory-firmware.md`) |
 | OpenIPC compatibility | confirmed on one unit (GK7202V300, Linux 4.9.37) |
-| Wi-Fi, RTSP/HTTP | works at 640×360, 5 fps (stage 1 and 2); the unit now runs a 1080p main stream for the snapshots, so live video does not play in real time |
-| LCD preview and front button | works (stage 2) |
-| MQTT / Home Assistant | stage 3 installed on the camera (2026-11-20) with the newest daemon (`motion=1`, `snapshot=1`, 1920 × 1080 pictures of 135 to 168 KB; phone notifications with the picture reported by the owner; a software reboot with this build recovered by itself): connects to the broker, publishes discovery and state, reconnects after reboots; hours of runtime, three reboots; the motion sensor works in hand-waving tests; the broker is separate infrastructure, not in this repository. 2026-11-22: build `66a866b4…` with the live view (works from the Home Assistant app, about 11 KB per picture, 1.9 pictures/s), `motion_settle` and `wifi_reboot`; three Wi-Fi data-path stalls overnight, see next work |
-| Battery monitoring | MCU power frames decoded; the percentage follows the battery voltage (coprocessor log); charge state unconfirmed. Battery life about 15 to 18 h (2026-11-22) because the SoC never sleeps |
-| Reliable startup, recovery, update | startup works after a cold start; no automatic Wi-Fi reconnect; no OTA |
+| Wi-Fi | works through our SDIO drivers (stages 1 to 4, 6); data-path stalls still happen (one on 2026-11-23), recovered by `wifi_reboot` |
+| Video | Majestic delivers the snapshots (960 × 540) and the live view frames over MQTT; RTSP, ONVIF, audio and the video motion detector are off and the web panel is hidden on the unit (install guide, step 14) |
+| LCD preview and front button | works while the camera is awake (stage 2); a press that wakes the camera is consumed by the coprocessor |
+| Sleep like the factory firmware | works (stages 4 to 10): the camera sleeps after 60 s without activity, wakes by the PIR (sensitivity 3, about 1 m), the power button or the front button, and reports a PIR wake-up as motion with a snapshot; the coprocessor's own 5-minute timer is off |
+| Start-up time | U-Boot banner to Majestic 6.1 s, to the broker 5.6 s, to the person alert in Home Assistant 11.8 s (2026-11-23; what is left is in `docs/known-limits.md`) |
+| MQTT / Home Assistant | stage 3 and later daemons; the homelab checks every snapshot for a person (two detectors) and sends the only phone notification for a person |
+| Battery monitoring | MCU power frames decoded; the percentage follows the battery voltage; battery life in sleep mode not measured yet (it was 15 to 18 h without sleep) |
+| Recovery, update | every stage has an exact rollback; `bootdelay` is 0, so U-Boot cannot be stopped on the UART (recovery: SPI programmer, failsafe boot, `fw_setenv bootdelay 1`); no OTA |
 
 ## Next work (in a sensible order)
 
-0. **Sleep like the factory firmware** (battery life is hours, not weeks). **State 2026-11-23:** the standby (`8a:77 07`, `9a:03`, `8a:61 01`), the PIR switch and the wake-up by power button and by PIR were all observed on the camera; stage 4 (`firmware/stage4-sleep`) is installed, adds no boot hook, and nothing sleeps by itself yet. The daemon logic (`sleep_after`: wake by PIR is motion with a snapshot, then PIR on, sync and standby after the idle time) is written and tested on a host; stage 5 installs it and has not run on the camera yet. Stage 5 is installed and ran a real cycle (PIR wake-up with a snapshot, sleep after 60 s idle) with `sleep_after=60`, `sleep_usb=1`; it showed the coprocessor's own 5-minute wake-up timer, which stage 6 switches off (`8a:7b` 0). Stage 6 worked (no timer wake-ups). Stages 7 (PIR as the motion source while awake, `pir_motion`, `pir_sensitivity`, `motion_video`) and 8 (faster start: own `rcS`, 8.9 s to Majestic) are installed, and the video motion detector is off in `/etc/majestic.yaml`. State: PIR sensitivity 3 works from about 1 m (`pir_sensitivity=3` in `mqtt.conf`); stage 9 is installed; `bootdelay` is 0 and `extras=quiet` in U-Boot; RTSP, ONVIF and audio are off and the web panel is hidden (see the install guide, step 14); the picture is 1280 × 720 after 700 ms; stage 10 is installed and `extras` also has `printk.time=1 initcall_blacklist=femac_mdio_driver_init,femac_driver_init`; the picture is 960 × 540; the person alert arrives 11.8 s after the U-Boot banner (see known limits for what is left). Open: Majestic's cold start to the first picture (about 3 s), mDNS on 5353; the Wi-Fi data-path stall seen again on 2026-11-23 (recovered by `wifi_reboot`); wake-ups by key and timer; the battery current while asleep. The older instructions below are kept for the order of the experiments. The coprocessor commands for standby, the PIR and the wake-up reason are in `docs/factory-firmware.md` ("Two ways forward", way A). First: make `syslink_poll` accept every wake-up reason (today it only accepts `poweron`, so a PIR or button wake-up would fail), measure the time from power-on to the first picture, then switch the PIR on while awake and look for `command=03`, and only then try `8a:77 07` + `9a:03` + the `8a:61` answer. Each of these is a new MCU command: warn the owner first; the recovery from a sleeping SoC is the power button. Never send `8a:7e` with a non-zero value. Person detection: on the home server from the snapshot (OpenIPC has no `hi_ivp`).
-1. Observe stage 3 and the motion sensor over days: Home Assistant values (battery, USB, button, motion), broker outages, reconnects, false alarms (tune `motionDetect` sensitivity and region of interest). Stages 1 and 2 set no default route; stage 3 adds it from `gateway=` in `mqtt.conf`. Next for the goal "notify when someone is at the door": the optional `snapshot=1` publishes a picture to the broker on the Motion edge (Home Assistant never reaches the camera). Do NOT create a second web account or open the camera's port 80 to Home Assistant: the web interface has no roles and every account is a root-equivalent administrator.
-2. Wi-Fi health: on 2026-11-22 the interrupt-driven driver stalled three times in 11.5 hours (`rx_packets` frozen, UniFi saw no disconnect); the camera recovered each time by restarting about ten minutes later (Majestic's watchdog). `wifi_reboot` in `mqtt.conf` does the same sooner and is installed, but has not yet been seen ending a real stall. Find the cause of the stall (driver, SDIO link or MCU; see `docs/wifi-companion.md`). The optional `wifi_watchdog` (a reconnect) is unproven and off.
-3. The cause of the early-boot resets (two before every successful software reboot so far).
-4. Signal strength and access-point info (needs the RSSI query; warn first).
-5. Battery: confirm the capacity scale and the meaning of status 2 by observing a discharge and a full charge.
-6. PIR: check whether the sensor is usable (`support_pir=1` in the factory config).
-7. Person detection: the server side is deployed (a detector container in the Home Assistant pod of the homelab, `binary_sensor.front_door_person`, a silent "Person at the front door" update of the motion notification; see `docs/known-limits.md`). Open: collect real positives to tune the 50 % threshold, then decide whether to suppress notifications for motion without a person.
-8. Close the gaps in `docs/known-limits.md`: the unrecorded first-flash method, the lost source of the shipped `syslink_bg.ko`, non-reproducible LCD binaries, a licence file.
+1. **Measure the battery in sleep mode:** a day or more on the battery, with the wake-ups, the awake time and the last known battery value from Home Assistant. This decides whether more work on the power cycle is needed.
+2. **Observe the sleep cycle over days:** false PIR wake-ups, missed visitors, the person detector's answers (collect real positives to tune its thresholds), Wi-Fi stalls during the short awake windows.
+3. **Faster first picture:** Majestic needs about 3 s from its start to the first picture at a cold start (1.33 s at a warm restart). A minimal capture program on the vendor libraries, run from RAM first, would show whether that can be shortened; the live view would then need another source.
+4. **Front button while asleep:** the press that wakes the camera does not start the LCD preview (the coprocessor consumes it); the wake-up reason (`wifikey`) can start it.
+5. Wi-Fi health: find the cause of the data-path stalls (driver, SDIO link or coprocessor; see `docs/wifi-companion.md`). `wifi_reboot` recovers; `wifi_watchdog` (a reconnect) is unproven and off.
+6. The cause of the early-boot resets after a software reboot (two before every successful one; a cold start from the coprocessor does not have them).
+7. Signal strength and access-point info (needs the RSSI query `0x28`, a new coprocessor command: warn first).
+8. Battery: confirm the capacity scale and the meaning of status 2 by observing a discharge and a full charge.
+9. Close the gaps in `docs/known-limits.md`: the unrecorded first-flash method, the lost source of the shipped `syslink_bg.ko`, non-reproducible LCD binaries, a licence file, mDNS on 5353.
+
+Every new coprocessor command needs a warning to the owner first (the recovery from a silent coprocessor or a sleeping SoC is the power button); never send `8a:7e` with a non-zero value. Do NOT create a second web account or open the camera's port 80 to Home Assistant: the web interface had no roles and every account was a root-equivalent administrator.
 
 ## Evidence Checklist
 
 - [x] UART serial logs capture
 - [x] Verified SPI flash backup
-- [ ] Complete firmware analysis (the factory RTOS is only partly analysed)
+- [ ] Complete firmware analysis (the factory RTOS is only partly analysed; the power cycle, PIR and wake-up reasons are)
 - [ ] Hardware inventory documented (`docs/hardware-inventory.md` still has open items)
 - [x] OpenIPC compatibility confirmed (one unit)
 - [ ] Recovery procedures validated (restoring the factory flash and the overlay was never tested)

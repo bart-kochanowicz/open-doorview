@@ -12,10 +12,12 @@ Developed and tested on **one** RH-PD10 (Goke GK7202V300, 8 MiB SPI NOR, GC2053 
 |---|---|
 | OpenIPC boots from flash (Linux 4.9.37, Majestic) | works |
 | Wi-Fi (2.4 GHz WPA2, static IPv4) through the coprocessor | works; needs our SDIO drivers, which are in [`firmware/kernel/`](firmware/kernel) |
-| Night vision (IR-cut filter and IR LEDs) | works through Majestic with one GPIO (8); motion detection in the dark is noisy, see [night vision](docs/night-vision.md) |
-| RTSP and HTTP video | works at 640 × 360, 5 fps; 1080p is too slow over the SDIO link (the unit now runs a 1080p main stream so that MQTT snapshots are 1920 × 1080: live video then does not play in real time). The web interface is an administrator interface (root password, web terminal, firmware update): do not expose it ([known limits](docs/known-limits.md)) |
-| Front button lights the LCD with a 30 s live preview | works |
-| Battery, USB and button as MQTT/Home Assistant entities | installed on the camera (stage 3), connects to a broker with authentication and publishes to Home Assistant; observed over hours and three reboots, not yet over days. An optional motion sensor (Majestic's motion detector) is installed and was seen to work in hand-waving tests; false alarms were not studied |
+| **Sleep like the factory firmware** | works (stages 4 to 10): sleeps after 60 s without activity, wakes by the PIR or a button; a PIR wake-up reaches a "person at the door" alert in Home Assistant about 12 s after power-on (measured; the person check runs on a home server) |
+| Snapshots and live view over MQTT | works (960 × 540 snapshots after motion; small frames on demand); Home Assistant never reaches the camera |
+| Night vision (IR-cut filter and IR LEDs) | works through Majestic with one GPIO (8), see [night vision](docs/night-vision.md) |
+| RTSP and the web interface | possible (stages 1 to 3), but **switched off on the unit** for start-up time and security; the web interface is an administrator interface with no roles |
+| Front button lights the LCD with a 30 s live preview | works while the camera is awake |
+| Battery, USB and button as MQTT/Home Assistant entities | works (stage 3 and later); while the camera sleeps they are unavailable, the homelab keeps the last battery reading |
 
 What is **not** done or not known (battery scale, charge state, PIR, audio, DHCP, reconnect, person detection and more) is in [known limits](docs/known-limits.md). Please read it before you flash.
 
