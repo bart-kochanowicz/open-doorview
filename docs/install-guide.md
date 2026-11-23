@@ -256,6 +256,23 @@ cd /tmp/doorview-upload && sh install.sh .       # prints FAST_BOOT_INSTALLED
 
 The old scripts are kept as `/etc/doorview/<name>.before-fast` (not in `/etc/init.d`, where the stock `rcS` would run them). Rollback: upload the package again and run `sh rollback.sh`; it writes the stock `rcS` back as a file. If the camera does not come up after a cold start, log in on the UART during a boot window and run the same rollback, or `cp /etc/doorview/rcS.before-fast /etc/init.d/rcS` and the same for the other two scripts.
 
+## Step 14 (optional). Stage 9 and the manual trimming
+
+Stage 9 (`stage9-lean`) replaces `/etc/init.d/rcS` (the stage 8 script without zram swap and the SSH server) and `/usr/bin/load_goke` (the stock vendor loader without the six audio modules). Needs stage 8; expects exactly its `rcS` and the stock loader. The old files are kept as `/etc/doorview/<name>.before-lean`; rollback writes them back.
+
+```sh
+tools/package.sh stage9-lean
+python3 tools/upload-archive.py build/packages/stage9-lean.tar.gz "$DOORVIEW_PW"
+# on the camera:
+cd /tmp/doorview-upload && sh install.sh .       # prints LEAN_INSTALLED
+```
+
+Three changes were made by hand on the unit on 2026-11-23, each after two identical backups of the overlay (and of the U-Boot environment for the last one):
+
+- `/etc/majestic.yaml`: `rtsp`, `onvif` and `audio` with `enabled: false` (no listener on 554 and 3702 any more; mDNS on 5353 stays, its key was not found). The video motion detector was already off (`motionDetect: enabled: false`).
+- **The web panel is hidden:** `rm -rf /var/www` on the running system replaces every file of the panel (pages and CGI scripts, among them a browser console) by an overlay whiteout; three empty directories remain because this overlay cannot hide directories. Majestic's own endpoints (`/image.jpg`, `/metrics`) keep working; `/` answers 500 and the CGI scripts 404. To undo: `rm -rf /overlay/root/var/www` and restart.
+- **U-Boot:** `fw_setenv extras quiet` (the kernel stops writing its messages to the UART at 115200 baud, about 0.7 s) after `fw_setenv bootdelay 0` (1 s). Only these variables changed. To undo: `fw_setenv extras` and `fw_setenv bootdelay 1`.
+
 ## Verification checklist
 
 - [ ] Console shows `U-Boot 2022.10` and `Linux version 4.9.37`.
