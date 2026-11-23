@@ -9,6 +9,7 @@ The repository ships the exact binaries that were tested on a camera (in the `pa
 | `syslink_poll.ko`, `syslink_net.ko` (stage 1), `syslink_net_irq.ko` (stages 2 and 3) | `firmware/kernel/` | Debian 12 `gcc-arm-linux-gnueabi` 12.2.0, OpenIPC Linux 4.9.37 tree | **Yes, bit for bit** (verified from a clean Docker image and a fresh shallow clone) |
 | `doorview-mqtt` | `firmware/userland/mqtt/` | same compiler, freestanding, `-Os -mfloat-abi=soft -march=armv7-a` | **Yes, bit for bit** |
 | `button-preview`, `vo-live-30` | `firmware/userland/lcd/` | same compiler | **No.** The tested binaries came from command lines that were not recorded. A rebuild is the same source but not identical, and has not been tried on a camera |
+| `first-snap` (a measurement prototype, see [first-snap](first-snap.md)) | `firmware/userland/capture/` | same compiler, linked against the OpenIPC `libc.so` only | Not applicable: **never run on a camera**, no tested binary exists |
 | `syslink_bg.ko` | `firmware/kernel/syslink-handshake/syslink_bg.c` | same | **No.** The shipped binary was built from an earlier revision of the source that was not kept; see [known limits](known-limits.md) |
 | `libuclibc-compat.so` | OpenIPC `general/package/uclibc-compat` (MIT) | not rebuilt | Shipped as tested; a rebuild from the current upstream source gave a different file |
 | `vo.ko` | OpenIPC `goke-osdrv-gk7205v200` (proprietary) | not built | Downloaded by `tools/fetch-vendor.sh`, hash-checked, never stored here |
@@ -23,7 +24,7 @@ Needs Docker and network access. It builds a Debian 12 image, fetches the pinned
 tools/build.sh
 ```
 
-To also rebuild `vo-live-30` you need two libraries from the OpenIPC root file system. Extract them from the image you flashed:
+To also rebuild `vo-live-30` (and build `first-snap`) you need two libraries from the OpenIPC root file system. Extract them from the image you flashed:
 
 ```sh
 tools/extract-rootfs-libs.sh openipc-gk7202v300-nor-lite-8mb.bin     # fills build/rootfs-libs/

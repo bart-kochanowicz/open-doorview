@@ -96,6 +96,11 @@ if [ -f "$repo/build/rootfs-libs/libgk_api.so" ] && [ -f "$repo/build/rootfs-lib
         -I"$src/openhisilicon/include" -Wl,--allow-shlib-undefined -Wl,--dynamic-linker=/lib/ld-musl-arm.so.1 -Wl,--build-id \
         -o "$out/userland/vo-live-30" "$lcd/vo-live-30.c" -L"$repo/build/rootfs-libs" -l:libgk_api.so -l:libc.so
     ${cross}strip "$out/userland/vo-live-30"
+    # A measurement prototype that has not run on a camera; it loads the vendor libraries itself with dlopen.
+    ${cross}gcc -Os -mfloat-abi=soft -march=armv7-a -ffreestanding -fno-stack-protector -nostdlib \
+        -I"$src/openhisilicon/include" -Wl,--allow-shlib-undefined -Wl,--dynamic-linker=/lib/ld-musl-arm.so.1 -Wl,--build-id \
+        -o "$out/userland/first-snap" "$repo/firmware/userland/capture/first-snap.c" -L"$repo/build/rootfs-libs" -l:libc.so -lgcc
+    ${cross}strip "$out/userland/first-snap"
 else
     echo "vo-live-30 skipped: pass --rootfs-libs DIR (libc.so and libgk_api.so from the OpenIPC root filesystem)"
 fi
