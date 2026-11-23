@@ -1,0 +1,86 @@
+#!/bin/sh
+
+module_dir=${DOORVIEW_MODULE_DIR:-/etc/doorview}
+station_file=$module_dir/station.hex
+address_file=$module_dir/address
+mac_file=$module_dir/mac
+irq_module=$module_dir/syslink_net_irq.ko
+poll_module=$module_dir/syslink_net.ko
+sys_module=${DOORVIEW_SYS_MODULE:-/sys/module}
+station_parameter=$sys_module/syslink_net/parameters/station
+
+wait_for_handshake() {
+    # S39doorview enumerates the SDIO function and starts syslink_bg.
+    attempt=0
+    while [ "$attempt" -lt 100 ]; do
+        attempt=$((attempt + 1))
+        if dmesg | awk '
+            /syslink_sdio: port=[023] confirmed, ack result=0$/ {
+                split($0, fields, "port="); ready[substr(fields[2], 1, 1)] = 1
+            }
+            END { exit !(ready[0] && ready[2] && ready[3]) }
+        '; then
+            return 0
+        fi
+        sleep 0.1
+    done
+    return 1
+}
+
+restore_background() {
+    rmmod syslink_net 2>/dev/null || true
+    insmod "$module_dir/syslink_bg.ko" resume_connected=1
+}
+
+# $1 = module, remaining arguments = module parameters.
+start_driver() {
+    module=$1
+    shift
+    if insmod "$module" resume_connected=1 "$@" &&
+        ip link set dev dv0 address "$mac" &&
+        ip link set dev dv0 mtu 700 &&
+        ip addr add "$address" dev dv0 &&
+        ip link set dev dv0 up &&
+        cat "$station_file" > "$station_parameter"; then
+        return 0
+    fi
+    rmmod syslink_net 2>/dev/null || true
+    return 1
+}
+
+start() {
+    [ -r "$station_file" ] && [ -r "$address_file" ] && [ -r "$mac_file" ] || return 0
+    [ ! -d "$sys_module/syslink_net" ] || return 0
+    case $(wc -c < "$station_file" | tr -d '[:space:]') in
+        128|129) ;;
+        *) return 1 ;;
+    esac
+    grep -Eq '^[0-9a-fA-F]{128}$' "$station_file" || return 1
+    read -r address < "$address_file" || return 1
+    read -r mac < "$mac_file" || return 1
+    printf '%s\n' "$address" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$' || return 1
+    printf '%s\n' "$mac" | grep -Eq '^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$' || return 1
+
+    [ -d "$sys_module/syslink_bg" ] && wait_for_handshake || return 1
+    rmmod syslink_bg || return 1
+    # Prefer the GPIO-IRQ receive path: the polling driver can lose all SDIO
+    # frames, including MCU button events. Fall back to the polling driver.
+    if [ -r "$irq_module" ] &&
+        start_driver "$irq_module" tx_max_len=768 rx_burst=1 rx_gpio=36 irq_rx=1 rx_poll_ms=100; then
+        echo "Doorview Wi-Fi: station request queued (IRQ receive)"
+        return 0
+    fi
+    [ ! -r "$irq_module" ] || echo "Doorview Wi-Fi: IRQ driver failed, trying polling driver" >&2
+    if start_driver "$poll_module" tx_max_len=768 rx_burst=1; then
+        echo "Doorview Wi-Fi: station request queued"
+        return 0
+    fi
+    echo "Doorview Wi-Fi: startup failed, restoring SDIO heartbeat" >&2
+    restore_background
+    return 1
+}
+
+case "$1" in
+    start) start ;;
+    *) exit 2 ;;
+esac
