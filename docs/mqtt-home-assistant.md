@@ -125,6 +125,25 @@ What the daemon ignores on the command topic, on purpose: any payload other than
 
 Tested with a real Mosquitto and a fake Majestic (see the test suite): pictures that match what Majestic served, not retained, at most one per interval, the end by time and by `OFF`, the restart by a second `ON`, ignored payloads and retained `ON`, a 70,000-byte payload on the command topic without a disconnect, a motion snapshot during a view, a Majestic that answers with a page that is not a JPEG, and the configuration refusals. **Not yet run on a camera**: the real picture size, the time per picture over the SDIO link, and how it affects the Wi-Fi.
 
+## Sleep
+
+`sleep_after=<seconds>` (0 = off, the default; otherwise 10 to 3600) puts the camera to sleep like the factory firmware when nothing has happened for that long. It needs `snapshot=1` (so also `motion=1`), the stage 4 drivers (`firmware/stage4-sleep`) and, to wake by itself, a PIR that is switched on, which the daemon does before every sleep. **Status:** the logic is covered by tests against a real broker (host build); it has not run on a camera yet, see [known limits](known-limits.md).
+
+What the daemon does, in this order, when the camera has been idle for `sleep_after` seconds and nothing blocks it:
+
+1. publishes `availability` = `offline` (retained) and closes the connection cleanly, so Home Assistant shows the camera as offline at once, not after the keep-alive;
+2. writes `780100` to the `mcu` parameter of the syslink driver (PIR on; `mcu_parameter=` changes the path);
+3. syncs the file systems;
+4. writes `1` to the `standby` parameter (`standby_parameter=`): the driver sends `8a:77 07` and `9a:03` and answers the coprocessor's `0xa0`, which then switches the SoC off.
+
+If the camera is still running 30 s later it logs that, reconnects, and does not try again for five minutes.
+
+**Idle** means no motion, no button press, no PIR alarm while awake, no live view and no picture published for `sleep_after` seconds. **Blocked** means: a live view is running, a picture is still to be sent, the motion sensor is on, a button press is still to be published, the first power frame has not arrived, or the camera is on USB power (set `sleep_usb=1` to sleep there too), or the file `/tmp/doorview-stay-awake` exists (`stay_awake_file=`): create it before a session on the UART, because a camera that goes to sleep in the middle of one needs the power button. The log says `sleep postponed` once.
+
+**Wake-up.** The reason the coprocessor gave is in `/sys/module/syslink_poll/parameters/reason` (`reason_file=`). For `pir` the daemon publishes motion `ON` and one snapshot as soon as it is connected, so the existing Home Assistant automations (notification, archive, person detection) run unchanged; wait for the picture with `snapshot_delay_ms=1500`, because the first frame after a start can be dark. Other reasons (`poweron`, `key`, `timer`...) only start the idle count. **A press of the front button that wakes the camera is consumed by the coprocessor: the LCD preview does not start for that press.**
+
+While the camera sleeps, every entity of the device is unavailable in Home Assistant (the camera is offline; the retained battery value is kept by the broker but not by the entities). Nothing can wake it from Home Assistant yet: the live view needs an awake camera.
+
 ## How it works
 
 It opens `/dev/kmsg` and parses the `doorview_control` and `doorview_power` lines the stage 3 network driver writes ([coprocessor](wifi-companion.md#control-frames-from-the-mcu)). Because it needs the `doorview_power` line, stage 3 replaces the stage 2 driver with a build that adds it; the button line the LCD service matches is unchanged. A single poll loop handles the kernel log, the socket and the timers; connecting is non-blocking. The motion poll is a short exchange on its own socket (bounded to 300 ms, stopped as soon as the line is complete), so a slow Majestic cannot stall the MQTT connection for long. The daemon pings the broker when it has heard nothing for half the keepalive, even while it is publishing: the broker acknowledges nothing the daemon publishes, so a daemon that publishes often would otherwise declare the broker dead (found by the motion tests).

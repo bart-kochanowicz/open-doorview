@@ -834,6 +834,120 @@ stop_live_subscribers
 kill "$snap_sub_pid" 2> /dev/null
 stop_majestic
 
+echo '== sleep =='
+# With sleep_after the camera goes to sleep like the factory firmware: it switches the PIR on (the mcu parameter of the
+# syslink driver), syncs and writes 1 to the standby parameter. The parameters, the wake-up reason and the "stay awake"
+# marker are plain files here. A PIR wake-up is reported as motion with a snapshot.
+kill_daemon
+make_jpeg 12000
+start_majestic
+set_mode normal
+rm -f "$work/mj/imgmode" "$work/mj/reqs"
+snap_total=0
+set_total 0
+: > "$work/snap.log"
+kill "${snap_sub_pid:-}" 2> /dev/null
+docker exec "$broker" mosquitto_sub -h 127.0.0.1 -u home-assistant -P "$ha_password" -t 'doorview/front-door-camera/snapshot' -F '%r|%l|%x' >> "$work/snap.log" 2> /dev/null &
+snap_sub_pid=$!
+printf '6,300,1000000,-;doorview_power: command=a2 count=44 length=12 head=8a a2 01 01 00 00 0c 00 payload=02 00 63 00\n' > "$work/kmsg-battery"
+printf '6,300,1000000,-;doorview_power: command=a2 count=44 length=12 head=8a a2 01 01 00 00 0c 00 payload=02 01 63 00\n' > "$work/kmsg-usb"
+kill "$sub_pid" 2> /dev/null
+sleep_log="$work/sleep-sub.log"
+: > "$sleep_log"
+docker exec "$broker" mosquitto_sub -h 127.0.0.1 -u home-assistant -P "$ha_password" -t 'doorview/front-door-camera/motion' -t 'doorview/front-door-camera/availability' -F '%r|%t|%p' >> "$sleep_log" 2> /dev/null &
+sub_pid=$!
+sleep_s 0.5
+
+start_sleep_daemon() { # <wake-up reason or ""> <kmsg file> [extra config lines, separated by \n]
+    grep -qE 'AddressSanitizer|runtime error' "$work/daemon-sleep.log" 2> /dev/null && touch "$work/sleep-sanitizer"
+    : > "$work/mcu"; : > "$work/standby"; : > "$work/reason"
+    [ -z "$1" ] || printf '%s\n' "$1" > "$work/reason"
+    : > "$sleep_log"
+    { cat "$work/mqtt.conf"; printf 'kmsg=%s\nmotion=1\nmotion_port=%s\nmotion_hold=2\nsnapshot=1\nsnapshot_cooldown=1\nsleep_after=10\nreason_file=%s/reason\nmcu_parameter=%s/mcu\nstandby_parameter=%s/standby\nstay_awake_file=%s/stay\n%b\n' "$2" "$motion_port" "$work" "$work" "$work" "$work" "${3:-}"; } > "$work/mqtt-sleep.conf"
+    "$work/doorview-mqtt-asan" "$work/mqtt-sleep.conf" > "$work/daemon-sleep.log" 2>&1 &
+    daemon_pid=$!
+}
+sleeping() { [ "$(cat "$work/standby")" = 1 ]; }
+wait_sleep() { # <seconds>
+    for i in $(seq 1 "$(($1 * 10))"); do sleeping && return 0; sleep_s 0.1; done
+    return 1
+}
+
+echo '-- a PIR wake-up is motion with a picture, then the camera sleeps again'
+rm -f "$work/stay"
+start_sleep_daemon pir "$work/kmsg-battery"
+check 'the wake-up reason is logged' wait_for "$work/daemon-sleep.log" 'wake-up reason: pir' 5
+check 'a PIR wake-up publishes motion ON' wait_for "$sleep_log" '|doorview/front-door-camera/motion|ON' 8
+check 'and one picture' test "$(for i in $(seq 1 60); do [ "$(wc -l < "$work/snap.log" | tr -d ' ')" -ge 1 ] && echo 1 && break; sleep_s 0.1; done)" = 1
+check 'the picture is the one Majestic served' test "$(tail -n 1 "$work/snap.log" | cut -d'|' -f3)" = "$(cat "$work/mj/img.hex")"
+check 'the camera does not sleep while motion is still being reported' test "$(cat "$work/standby")" = ""
+check 'after sleep_after seconds of nothing the standby is requested' wait_sleep 20
+check 'the PIR was switched on first (u16 1, as in the factory)' test "$(cat "$work/mcu")" = 780100
+check 'Home Assistant is told that the camera is offline before it goes' wait_for "$sleep_log" '|doorview/front-door-camera/availability|offline' 3
+check 'the log says that it is going to sleep' grep -q 'going to sleep' "$work/daemon-sleep.log"
+check 'no second standby request in the first seconds' test "$(grep -c 'going to sleep' "$work/daemon-sleep.log")" = 1
+kill_daemon
+
+echo '-- another wake-up reason: no motion, but the same sleep'
+start_sleep_daemon poweron "$work/kmsg-battery"
+check 'a power-on wake-up is logged' wait_for "$work/daemon-sleep.log" 'wake-up reason: poweron' 5
+sleep_s 2
+check_not 'it publishes no motion ON' grep -q '|motion|ON' "$sleep_log"
+check 'it still sleeps after the idle time' wait_sleep 20
+kill_daemon
+
+echo '-- no wake-up reason file: a normal start'
+start_sleep_daemon "" "$work/kmsg-battery"
+sleep_s 2
+check_not 'no motion is invented' grep -q '|motion|ON' "$sleep_log"
+kill_daemon
+
+echo '-- on a charger the camera stays awake unless sleep_usb=1'
+start_sleep_daemon poweron "$work/kmsg-usb"
+sleep_s 14
+check_not 'it does not sleep on USB power' sleeping
+check 'it says why' grep -q 'sleep postponed' "$work/daemon-sleep.log"
+check_not 'it never switched the PIR on' test -s "$work/mcu"
+kill_daemon
+start_sleep_daemon poweron "$work/kmsg-usb" 'sleep_usb=1'
+check 'sleep_usb=1 sleeps on USB power too' wait_sleep 20
+kill_daemon
+
+echo '-- the stay-awake marker keeps it up until it is removed'
+: > "$work/stay"
+start_sleep_daemon poweron "$work/kmsg-battery"
+sleep_s 14
+check_not 'with the marker it does not sleep' sleeping
+rm -f "$work/stay"
+check 'without it it sleeps' wait_sleep 8
+kill_daemon
+
+echo '-- a live view keeps the camera awake'
+start_live_subscribers
+start_sleep_daemon poweron "$work/kmsg-battery" 'live=1\nlive_seconds=30\nlive_interval_ms=300'
+sleep_s 4
+ha_pub doorview/front-door-camera/live/set ON
+sleep_s 11
+check_not 'still awake 15 s after the start: a running view is not idle, however long it lasts' sleeping
+ha_pub doorview/front-door-camera/live/set OFF
+sleep_s 1.5
+check_not 'still awake right after the view ended: the end of the view counts as activity' sleeping
+check 'it sleeps once the camera has been idle again for sleep_after seconds' wait_sleep 15
+kill_daemon
+stop_live_subscribers
+
+echo '-- a standby that cannot be written does not kill the daemon'
+start_sleep_daemon poweron "$work/kmsg-battery" "standby_parameter=$work/no-such-directory/standby"
+check 'it logs that the standby was refused' wait_for "$work/daemon-sleep.log" 'sleep refused: cannot start the standby' 20
+sleep_s 4
+check 'the daemon is still running' kill -0 "$daemon_pid"
+check 'and connected again (online is published after the offline)' test "$(grep -c 'availability|online' "$sleep_log")" -ge 2
+kill_daemon
+start_sleep_daemon poweron "$work/kmsg-battery" "mcu_parameter=$work/no-such-directory/mcu"
+check 'a PIR switch that cannot be written stops the sleep before the standby' wait_for "$work/daemon-sleep.log" 'sleep refused: cannot switch the PIR on' 20
+check_not 'and no standby is written' sleeping
+kill_daemon
+
 echo '== configuration =='
 # The daemon exits with 2 when the configuration is refused and, on a host without a readable kernel log (the test
 # gives it a missing path), with 3 once the configuration has been accepted. Any other non-zero exit would also
@@ -921,6 +1035,18 @@ check 'wifi_reboot 0 and 3600 are accepted' test "$(config_exit 'host=127.0.0.1\
 check 'wifi_reboot above 3600 and negative are rejected' test "$(config_exit 'host=127.0.0.1\nwifi_reboot=3601\n')$(config_exit 'host=127.0.0.1\nwifi_reboot=-1\n')" = 22
 check 'motion_settle 0 and 600 are accepted' test "$(config_exit 'host=127.0.0.1\nmotion_settle=0\n')$(config_exit 'host=127.0.0.1\nmotion_settle=600\n')" = 33
 check 'motion_settle above 600 and negative are rejected' test "$(config_exit 'host=127.0.0.1\nmotion_settle=601\n')$(config_exit 'host=127.0.0.1\nmotion_settle=-1\n')" = 22
+
+grep -qE 'AddressSanitizer|runtime error' "$work/daemon-sleep.log" 2> /dev/null && touch "$work/sleep-sanitizer"
+check_not 'the sanitizers report nothing during the sleep tests' test -e "$work/sleep-sanitizer"
+
+echo '-- configuration of the sleep keys'
+check 'sleep_after below 10 seconds is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=5\n')" = 2
+check 'sleep_after above 3600 seconds is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=4000\n')" = 2
+check 'sleep_after without snapshot=1 is rejected' test "$(config_exit 'host=127.0.0.1\nsleep_after=60\n')" = 2
+check 'a valid sleep configuration is accepted' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nsleep_usb=1\n')" = 3
+check 'sleep_after=0 means off and is accepted without a snapshot' test "$(config_exit 'host=127.0.0.1\nsleep_after=0\n')" = 3
+check 'a parameter path must be a clean absolute path' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nstandby_parameter=/a b\n')" = 2
+check 'a relative parameter path is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nmcu_parameter=mcu\n')" = 2
 
 echo "passed=$passed failed=$failed"
 [ "$failed" = 0 ]

@@ -49,6 +49,11 @@ build_module syslink-net-irq-stage3 syslink_net syslink_net_irq-stage3.ko
 build_module syslink-net-irq syslink_net syslink_net_irq.ko
 
 echo "== camera binaries =="
+old_mqtt=$repo/firmware/userland/mqtt-stage3
+${cross}gcc -Os -mfloat-abi=soft -march=armv7-a -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector \
+    -nostdlib -static -Wl,--gc-sections -Wl,--build-id -o "$out/userland/doorview-mqtt-stage3" "$old_mqtt/doorview-mqtt.c" "$old_mqtt/sys-arm.c"
+${cross}strip "$out/userland/doorview-mqtt-stage3"
+
 mqtt=$repo/firmware/userland/mqtt
 ${cross}gcc -Os -mfloat-abi=soft -march=armv7-a -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector \
     -nostdlib -static -Wl,--gc-sections -Wl,--build-id -o "$out/userland/doorview-mqtt" "$mqtt/doorview-mqtt.c" "$mqtt/sys-arm.c"

@@ -115,6 +115,11 @@ void sys_exit(int code)
     _exit(code);
 }
 
+void sys_sync(void)
+{
+    sync();
+}
+
 void sys_reboot(void)
 {
     _exit(86);

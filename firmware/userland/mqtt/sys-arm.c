@@ -167,6 +167,11 @@ void sys_exit(int code)
     }
 }
 
+void sys_sync(void)
+{
+    call(NR_sync, 0, 0, 0);
+}
+
 void sys_reboot(void)
 {
     call(NR_sync, 0, 0, 0);

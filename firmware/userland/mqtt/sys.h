@@ -26,6 +26,8 @@ int sys_tcp_status(int fd);
 void sys_wait(int kmsg_fd, int socket_fd, int socket_wants_write, int timeout_ms);
 u32 sys_now_ms(void);
 void sys_exit(int code);
+/* Writes the filesystems out. */
+void sys_sync(void);
 /* Writes the filesystems out and restarts the machine; does not return (the host build exits with 86 instead). */
 void sys_reboot(void);
 
