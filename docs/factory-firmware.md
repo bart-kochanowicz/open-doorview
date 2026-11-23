@@ -102,7 +102,7 @@ A synchronous request waits for a reply with the same channel and command + 1 (`
 | `0xa6` | tamper key | |
 | `0xb0` | standby notice (the factory handler only logs it) | |
 
-The stage 3 driver logs every `0x8a` message as `doorview_control: command=..`, so a PIR alarm would appear as `command=03` without any driver change.
+The stage 3 driver logs every `0x8a` message as `doorview_control: command=..`, so a PIR alarm would appear as `command=03` without any driver change. **Observed on 2026-11-23:** a PIR alarm arrives as `8a 03 01 01 00 00 09 00 <b>` with `b` = `01` at the start and `00` at the end of a movement, after `8a:78 01 00` (PIR on); `8a:78 00 00` stopped them.
 
 ## Why the RAM test of 2026-11-18 silenced the camera
 
@@ -203,7 +203,7 @@ A wake-up from Home Assistant would need our own keep-alive server instead of th
 
 ## Not established
 
-- The meaning of the PIR setting values above 0, and the sensitivity range.
+- The meaning of the PIR setting values above 1, the sensitivity range and what `8a:79` changes (level 1 was sent once, with no visible effect), the detection range and the cool-down between alarms.
 - The payloads of `0x65` and `0x7c`; the "wake line threshold" and the units of the keep-alive interval; whether the keep-alive works without the `9a:07` authentication.
 - Whether the coprocessor switches the SoC off after `9a:03` without the server keep-alive, and how long it waits for the `0x61` answer.
 - Whether the factory power-cycle order is the same on other coprocessor firmware versions (one unit, `3.2.23`).

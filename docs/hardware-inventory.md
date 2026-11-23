@@ -1,6 +1,6 @@
 # Hardware inventory
 
-This inventory preserves leads from the initial project notes. They have not been independently verified in this repository. Treat markings, measurements and ratings as reported until supported by photos, measurements, datasheets or logs.
+This inventory records hardware observations and leads from the initial project notes. The status column identifies the available evidence.
 
 | Item | Initial report | Status / next evidence |
 | --- | --- | --- |
@@ -11,7 +11,9 @@ This inventory preserves leads from the initial project notes. They have not bee
 | Battery | Li-ion, reportedly 3.7 V nominal / 5000 mAh | Verify label and connector. |
 | UART pad groups | Labels reported as RXD, TXD, GND and 1.8V | Physical location, signal direction and relationship to the main SoC unverified. See [UART diagnostics](uart-pinout.md). |
 | Measurements | 1.8V pad and idle TXD reported around 1.8 V; RXD around 0 V | Source, measurement conditions and pad group are not recorded; remeasure. These values do not establish tolerance of any other pin. |
-| Camera, display, Wi-Fi, buttons | Present or expected from initial notes | Identify the individual components and interfaces. |
+| Display | FPC marked `4306J40R09-L`, with a `40` end mark | Photo confirms the markings. Factory firmware configures the SoC for `LCD_8BIT`, 480 × 272, at a programmed 30 fps. The panel displayed a solid green field and a camera still in temporary OpenIPC tests. Live preview ran at 480 × 272 and 5 fps alongside RTSP. BT.601-to-RGB conversion corrected colors in the RGB test pattern and live preview. Panel controller and connector pinout are pending. |
+| Front button | Single button below the display | The MCU sends command `0xA5` in repeated copies. A RAM-only OpenIPC test used it to trigger a 30-second live LCD preview. |
+| Camera, Wi-Fi | Present or expected from initial notes | Identify the individual components and interfaces. |
 
 ## Evidence to collect
 
