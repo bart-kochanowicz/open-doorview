@@ -151,7 +151,7 @@ video0:
 
 Write it to `/etc/majestic.yaml` on the camera (another flash write) and restart Majestic with `/etc/init.d/S95majestic restart`. A 300 s test decoded 1,504 frames at 5.03 fps.
 
-For night vision add `nightMode: {irCutPin1: 8, lightMonitor: true}` to the same file, and install the GC2053 noise profile `/etc/sensors/iq/gc2053.ini` made by `tools/gc2053-iq.sed` (see [night vision](night-vision.md)); there `slowShutter` is `medium`, which lets the exposure last longer in the dark at the cost of video frame rate.
+For night vision add `nightMode: {irCutPin1: 8, lightMonitor: true, autoNightGain: 16, autoDayGain: 4, autoNightDelay: 1, monitorDelay: 1}` to the same file (the four timing values make night mode start within the first seconds after a wake-up, see [night vision](night-vision.md#night-mode-right-after-a-wake-up-2026-11-23)), and install the GC2053 noise profile `/etc/sensors/iq/gc2053.ini` made by `tools/gc2053-iq.sed` (see [night vision](night-vision.md)); there `slowShutter` is `medium`, which lets the exposure last longer in the dark at the cost of video frame rate.
 
 This profile limits snapshots too: Majestic cuts a still from `video0` and never makes it larger, so the MQTT snapshot is at most 640 × 360. For full 1920 × 1080 pictures set `size: 1920x1080` (the unit has run it since 2026-11-21): the stream then does not play in real time, but the snapshots need no video session, and each is about 120 to 170 KB (see [Snapshot](mqtt-home-assistant.md#snapshot); the broker's packet limit must allow it).
 
@@ -295,6 +295,32 @@ tools/package.sh stage11-wake-preview
 python3 tools/upload-archive.py build/packages/stage11-wake-preview.tar.gz "$DOORVIEW_PW"
 # on the camera:
 cd /tmp/doorview-upload && sh install.sh .       # prints WAKE_PREVIEW_INSTALLED
+```
+
+## Step 17 (optional). Stage 12: the highest PIR sensitivity
+
+The factory app has three PIR sensitivity settings and sends them to the coprocessor as the values 1, 3 and 5 (read from the factory firmware, `IPC_APP_set_pir_ctl`); 3, the factory's middle setting, was the highest the drivers accepted. Stage 12 (`stage12-pir-high`) replaces `/etc/doorview/syslink_net_irq.ko` (the stage 6 driver with the range 1 to 5 for `8a:79`) and `/etc/doorview/doorview-mqtt` (the stage 10 daemon with `pir_sensitivity=0..5`). Needs stages 6 and 10; the old files are kept as `/etc/doorview/<name>.before-high`. **Observed on the unit (2026-11-23):** both builds ran from RAM first; at level 5 every walk into the picture produced PIR alarm frames while the camera was awake, where level 3 had produced none in the same kind of test.
+
+```sh
+tools/package.sh stage12-pir-high
+python3 tools/upload-archive.py build/packages/stage12-pir-high.tar.gz "$DOORVIEW_PW"
+# on the camera:
+cd /tmp/doorview-upload && sh install.sh .       # prints PIR_HIGH_INSTALLED
+sed -i 's/^pir_sensitivity=.*/pir_sensitivity=5/' /etc/doorview/mqtt.conf
+```
+
+Rollback: set `pir_sensitivity=3` (or less) first, because the old daemon refuses 5 and would not start; `rollback.sh` refuses while 4 or 5 is configured.
+
+## Step 18 (optional). Stage 13: the night picture after a wake-up
+
+A wake-up starts Majestic in day mode; in the dark the first picture came before the IR LEDs were on, dark and in colour, even with the night settings of [night vision](night-vision.md#night-mode-right-after-a-wake-up-2026-11-23). Stage 13 (`stage13-night-wait`) replaces `/etc/doorview/doorview-mqtt` with the build that reads `night_wait_ms` (0 to 8000, default 0 = off): before the picture it asks Majestic's `/metrics/night`, and while the light is not measured yet (`night_auto_gain_milli -1`) or Majestic is counting toward night (`night_auto_pending 1`) it waits, every 200 ms and at most that long; in night mode, in daylight or without these metrics it takes the picture at once. Needs stage 12; the old daemon is kept as `/etc/doorview/doorview-mqtt.before-night` and ignores the key. **Observed on the unit (2026-11-23):** from RAM, with Majestic restarted and the IR pin set low by hand (as after a cold start), the daemon logged `waiting for night mode` and published a black-and-white infrared picture 3.7 s after Majestic's start, in which a person is clearly visible; before, the first picture of a wake-up in the dark was dark and in colour. After installing it, a real PIR wake-up in the dark gave an IR-lit picture with the person clearly visible (in colour with a violet cast: Majestic moves the filter and lights the LEDs before it switches the picture to grey).
+
+```sh
+tools/package.sh stage13-night-wait
+python3 tools/upload-archive.py build/packages/stage13-night-wait.tar.gz "$DOORVIEW_PW"
+# on the camera:
+cd /tmp/doorview-upload && sh install.sh .       # prints NIGHT_WAIT_INSTALLED
+echo night_wait_ms=4000 >> /etc/doorview/mqtt.conf
 ```
 
 ## Verification checklist

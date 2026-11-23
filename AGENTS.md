@@ -25,9 +25,9 @@ This repository holds the recovery procedures and the custom firmware layer for 
 |---|---|
 | `README.md`, `docs/install-guide.md` | what works and the end-to-end install |
 | `docs/` | procedures (`flash-layout.md`, `uart-pinout.md`, `openipc-flash.md`), hardware notes (`wifi-companion.md`, `factory-firmware.md`, `lcd-and-button.md`, `mqtt-home-assistant.md`), `troubleshooting.md`, `known-limits.md`, `building.md` |
-| `firmware/stage1-wifi`, `stage2-lcd`, `stage3-mqtt`, `stage4-sleep`, `stage5-sleep-daemon`, `stage6-wake-timer`, `stage7-pir-motion`, `stage8-fast-boot`, `stage9-lean`, `stage10-early-daemon`, `stage11-wake-preview` | installable packages: installer, rollback, payload, tests. The stages form a chain; later installers pin the exact files of earlier ones by SHA-256 |
+| `firmware/stage1-wifi`, `stage2-lcd`, `stage3-mqtt`, `stage4-sleep`, `stage5-sleep-daemon`, `stage6-wake-timer`, `stage7-pir-motion`, `stage8-fast-boot`, `stage9-lean`, `stage10-early-daemon`, `stage11-wake-preview`, `stage12-pir-high`, `stage13-night-wait` | installable packages: installer, rollback, payload, tests. The stages form a chain; later installers pin the exact files of earlier ones by SHA-256 |
 | `firmware/kernel/` | source of every kernel module, one directory per module |
-| `firmware/userland/` | LCD/button programs, the MQTT daemon, and `capture/first-snap.c` (a measurement prototype, never run) |
+| `firmware/userland/` | LCD/button programs, the MQTT daemon, and `capture/first-snap.c` (a measurement prototype; on the unit it crashes in `GK_API_SYS_Init`) |
 | `firmware/EXPECTED-BUILDS.txt` | hashes of the binaries tested on a camera, and whether a rebuild reproduces them |
 | `tools/` | host-side helpers (UART, backup, packaging, build); see `tools/README.md` |
 | `tests/run-all.sh` | every suite that needs no camera |
@@ -54,9 +54,9 @@ Private material lives **outside** the repository (flash dumps, overlay backups,
 | Serial diagnostics, verified SPI backup (two identical reads), firmware analysis | done; the factory restore path was never tested; the factory RTOS is analysed where it mattered (power cycle, PIR, wake-up reasons; `docs/factory-firmware.md`) |
 | OpenIPC compatibility | confirmed on one unit (GK7202V300, Linux 4.9.37) |
 | Wi-Fi | works through our SDIO drivers (stages 1 to 4, 6); data-path stalls still happen (one on 2026-11-23), recovered by `wifi_reboot` |
-| Video | Majestic delivers the snapshots (960 × 540) and the live view frames over MQTT; RTSP, ONVIF, audio and the video motion detector are off and the web panel is hidden on the unit (install guide, step 14) |
+| Video | Majestic delivers the snapshots (960 × 540) and the live view frames over MQTT; night mode from the sensor gain within about 3 s of a wake-up, and the daemon holds the wake-up picture until the IR LEDs are on (stage 13); RTSP, ONVIF, audio and the video motion detector are off and the web panel is hidden on the unit (install guide, step 14) |
 | LCD preview and front button | works while the camera is awake (stage 2); a press that wakes the camera is consumed by the coprocessor |
-| Sleep like the factory firmware | works (stages 4 to 10): the camera sleeps after 60 s without activity, wakes by the PIR (sensitivity 3, about 1 m), the power button or the front button, and reports a PIR wake-up as motion with a snapshot; the coprocessor's own 5-minute timer is off |
+| Sleep like the factory firmware | works (stages 4 to 10): the camera sleeps after 60 s without activity, wakes by the PIR (sensitivity 5 since stage 12, the factory app's highest; 3 reached about 1 m), the power button or the front button, and reports a PIR wake-up as motion with a snapshot; the coprocessor's own 5-minute timer is off |
 | Start-up time | U-Boot banner to Majestic 6.1 s, to the broker 5.6 s, to the person alert in Home Assistant 11.8 s (2026-11-23; what is left is in `docs/known-limits.md`) |
 | MQTT / Home Assistant | stage 3 and later daemons; the homelab checks every snapshot for a person (two detectors) and sends the only phone notification for a person |
 | Battery monitoring | MCU power frames decoded; the percentage follows the battery voltage; battery life in sleep mode not measured yet (it was 15 to 18 h without sleep) |
@@ -66,8 +66,8 @@ Private material lives **outside** the repository (flash dumps, overlay backups,
 
 1. **Measure the battery in sleep mode:** a day or more on the battery, with the wake-ups, the awake time and the last known battery value from Home Assistant. This decides whether more work on the power cycle is needed.
 2. **Observe the sleep cycle over days:** false PIR wake-ups, missed visitors, the person detector's answers (collect real positives to tune its thresholds), Wi-Fi stalls during the short awake windows.
-3. **Faster first picture:** Majestic needs about 3 s from its start to the first picture at a cold start (1.33 s at a warm restart). `firmware/userland/capture/first-snap.c` is that minimal capture program (written and cross-compiled, never run; `docs/first-snap.md` has the RAM-only measurement and what decides the next step); the live view would then need another source.
-4. **Front button while asleep:** the press that wakes the camera does not start the LCD preview (the coprocessor consumes it). Stage 11 starts the preview after a `wifikey` wake-up; it is written and tested on a host, not installed yet.
+3. **Faster first picture:** Majestic needs about 3 s from its start to the first picture at a cold start (1.33 s at a warm restart). `firmware/userland/capture/first-snap.c` is that minimal capture program (run from RAM on 2026-11-23: it crashes inside `GK_API_SYS_Init`; `docs/first-snap.md` has the RAM-only measurement and what decides the next step); the live view would then need another source.
+4. **Front button while asleep:** the press that wakes the camera does not start the LCD preview (the coprocessor consumes it). Stage 11 starts the preview after a `wifikey` wake-up; installed on 2026-11-23, a front-button wake-up has not been checked yet.
 5. Wi-Fi health: find the cause of the data-path stalls (driver, SDIO link or coprocessor; see `docs/wifi-companion.md`). `wifi_reboot` recovers; `wifi_watchdog` (a reconnect) is unproven and off.
 6. The cause of the early-boot resets after a software reboot (two before every successful one; a cold start from the coprocessor does not have them).
 7. Signal strength and access-point info (needs the RSSI query `0x28`, a new coprocessor command: warn first).

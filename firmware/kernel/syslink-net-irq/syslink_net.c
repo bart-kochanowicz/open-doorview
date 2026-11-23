@@ -235,7 +235,7 @@ unlock:
  * One command for the coprocessor on the application channel (0x8a), written as hex digits: the command byte and its
  * payload. Only these are accepted; every other command stays refused until it has been tested on its own:
  *   0x78  PIR off/on, u16 (0 or 1)                                  "780000", "780100"
- *   0x79  PIR sensitivity, level 1 to 3 in the high byte of a u16   "790001"
+ *   0x79  PIR sensitivity, level 1 to 5 in the high byte of a u16   "790001" (the factory app sends 1, 3 or 5)
  *   0x7b  wake-up timer, u32 seconds little endian, 0 = off, at most a week   "7b00000000", "7b2c010000" (300 s)
  */
 #define MCU_PAYLOAD_MAX 4
@@ -268,7 +268,7 @@ static int mcu_set(const char *value, const struct kernel_param *param)
         if (raw[1] > 1 || raw[2])
             return -EINVAL;
     } else if (raw[0] == 0x79 && size == 2) {
-        if (raw[1] || raw[2] < 1 || raw[2] > 3)
+        if (raw[1] || raw[2] < 1 || raw[2] > 5)
             return -EINVAL;
     } else if (raw[0] == 0x7b && size == 4) {
         u32 seconds = raw[1] | (raw[2] << 8) | (raw[3] << 16) | ((u32)raw[4] << 24);

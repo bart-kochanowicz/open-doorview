@@ -19,6 +19,10 @@ The camera has an IR-cut filter and IR LEDs, and both are switched by **one GPIO
 isp:
   slowShutter: medium
 nightMode:
+  autoNightGain: 16
+  autoDayGain: 4
+  autoNightDelay: 1
+  monitorDelay: 1
   irCutPin1: 8
   lightMonitor: true
 ```
@@ -51,6 +55,12 @@ Measured with it on the unit (observed), a dark room, in the HA recorder:
 
 **The camera did not switch to night mode by itself in that dim room** (gain 38,000 to 45,000, not at its maximum; earlier, with `slowShutter: disabled` and a maximum gain, it also needed the lens covered completely). Majestic decides from the sensor's own exposure state, so in a room that is dark but not black it stays in day mode and the IR LEDs stay off. Whether a real doorway at night is dark enough is not known. `nightMode.switchBy` offers `clock`, `sun` and the `pictureNear…` variants (`nightFrom`, `dayFrom`, latitude and longitude); none was tried.
 
+
+## Night mode right after a wake-up (2026-11-23)
+
+Since the camera sleeps between events, every wake-up starts Majestic in day mode. With the defaults it went to night only when the exposure ran out completely (`autoNightGain` empty), and only after 15 s of darkness; the picture after a PIR wake-up is taken about 1 s after Majestic answers and the camera sleeps again 60 s later. **Observed on the unit:** in the dark the exposure sat at its maximum (485 ms) with a gain of 53x to 75x for 48 s, the IR pin stayed low, and the picture of the wake-up was dark and in colour.
+
+`autoNightGain: 16` (night at 16x gain), `autoDayGain: 4` (day again at 4x or less), `autoNightDelay: 1` and `monitorDelay: 1` (seconds) make Majestic decide from the gain within its first second. **Observed on the unit:** tested first with a RAM-only bind mount of the file, then written to `/etc/majestic.yaml` after two identical overlay reads; after a Majestic restart in the dark the IR pin went high 3.1 s after the start and stayed high (27 s watched), and the picture was black and white and readable. The first picture of a wake-up still came before the switch (Majestic answers before it has measured the light); stage 13 makes the daemon wait for night mode (`night_wait_ms`, see the [install guide, step 18](install-guide.md#step-18-optional-stage-13-the-night-picture-after-a-wake-up)). The day threshold of 4x is a guess: the gain in daylight at the door was not measured, and the gain with the IR LEDs lit is lower than without them (Majestic checks day with the lamp down, `night_probe_*` in `/metrics`).
 
 ## Not solved
 

@@ -14,7 +14,7 @@ Developed and tested on **one** RH-PD10 (Goke GK7202V300, 8 MiB SPI NOR, GC2053 
 | Wi-Fi (2.4 GHz WPA2, static IPv4) through the coprocessor | works; needs our SDIO drivers, which are in [`firmware/kernel/`](firmware/kernel) |
 | **Sleep like the factory firmware** | works (stages 4 to 10): sleeps after 60 s without activity, wakes by the PIR or a button; a PIR wake-up reaches a "person at the door" alert in Home Assistant about 12 s after power-on (measured; the person check runs on a home server) |
 | Snapshots and live view over MQTT | works (960 × 540 snapshots after motion; small frames on demand); Home Assistant never reaches the camera |
-| Night vision (IR-cut filter and IR LEDs) | works through Majestic with one GPIO (8), see [night vision](docs/night-vision.md) |
+| Night vision (IR-cut filter and IR LEDs) | works through Majestic with one GPIO (8); after a wake-up in the dark night mode comes within about 3 s and the wake-up picture waits for it (stage 13), see [night vision](docs/night-vision.md) |
 | RTSP and the web interface | possible (stages 1 to 3), but **switched off on the unit** for start-up time and security; the web interface is an administrator interface with no roles |
 | Front button lights the LCD with a 30 s live preview | works while the camera is awake |
 | Battery, USB and button as MQTT/Home Assistant entities | works (stage 3 and later); while the camera sleeps they are unavailable, the homelab keeps the last battery reading |
@@ -33,7 +33,7 @@ What is **not** done or not known (battery scale, charge state, PIR, audio, DHCP
 | Path | Contents |
 |---|---|
 | `docs/` | install guide, hardware notes, procedures, known limits |
-| `firmware/stage1-wifi`, `stage2-lcd`, `stage3-mqtt`, `stage4-sleep`, `stage5-sleep-daemon`, `stage6-wake-timer`, `stage7-pir-motion`, `stage8-fast-boot`, `stage9-lean`, `stage10-early-daemon`, `stage11-wake-preview` | installable packages: installer, rollback, payload, tests ([overview](firmware/README.md)) |
+| `firmware/stage1-wifi`, `stage2-lcd`, `stage3-mqtt`, `stage4-sleep`, `stage5-sleep-daemon`, `stage6-wake-timer`, `stage7-pir-motion`, `stage8-fast-boot`, `stage9-lean`, `stage10-early-daemon`, `stage11-wake-preview`, `stage12-pir-high`, `stage13-night-wait` | installable packages: installer, rollback, payload, tests ([overview](firmware/README.md)) |
 | `firmware/kernel/` | source of the SDIO/Wi-Fi kernel modules |
 | `firmware/userland/` | LCD and button programs, the MQTT daemon |
 | `tools/` | host-side helpers: UART upload and backup, Wi-Fi configuration, JFFS2 reader, build and packaging scripts |

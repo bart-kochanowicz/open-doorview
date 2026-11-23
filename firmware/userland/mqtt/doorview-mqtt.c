@@ -6,12 +6,15 @@
  * snapshot=1 it publishes a JPEG from Majestic when motion starts, so Home Assistant never has to reach the camera.
  * With live=1 it subscribes to doorview/<node>/live/set and, on ON, publishes small pictures to doorview/<node>/live for
  * live_seconds (a slide show on demand); OFF or the time running out ends it.
- * With pir_motion=1 the PIR (switched on by the daemon; pir_sensitivity=1..3) is the motion source while the camera is awake
+ * With pir_motion=1 the PIR (switched on by the daemon; pir_sensitivity=1..5, the factory app uses 1, 3 and 5) is the motion source while the camera is awake
  * too: an alarm start in the kernel log is a motion edge with a snapshot, and motion_video=0 stops polling Majestic's video
  * motion detector.
  * With sleep_after=<seconds> it puts the camera to sleep, like the factory firmware, when nothing has happened for that
  * long: it switches the PIR on, syncs and asks the syslink driver for the standby (see docs/factory-firmware.md); a PIR
  * wake-up (reason "pir" in the syslink_poll parameter) is reported as motion with a snapshot, so Home Assistant sees it.
+ * With night_wait_ms=<ms> the snapshot waits, at most that long, while Majestic's /metrics/night says the light has not
+ * been measured yet or a switch to night is under way: a wake-up starts in day mode, and the first picture in the dark
+ * would come before the IR LEDs.
  * Platform access goes through sys.h, so the same logic runs on the camera and on a test host. */
 #include "sys.h"
 
@@ -59,6 +62,7 @@ struct config {
     int motion_settle;
     int snapshot;
     int snapshot_cooldown;
+    int night_wait_ms;
     int snapshot_delay_ms;
     int live;
     int live_seconds;
@@ -468,7 +472,7 @@ static int load_config(const char *path)
         } else if (str_eq(line, "pir_motion")) {
             cfg.pir_motion = str_eq(value, "1");
         } else if (str_eq(line, "pir_sensitivity")) {
-            if (!parse_number(value, &number) || number < 0 || number > 3)
+            if (!parse_number(value, &number) || number < 0 || number > 5)
                 return -27;
             cfg.pir_sensitivity = number;
         } else if (str_eq(line, "wake_timer")) {
@@ -490,6 +494,10 @@ static int load_config(const char *path)
             if (!parse_number(value, &number) || number < 1 || number > 3600)
                 return -13;
             cfg.snapshot_cooldown = number;
+        } else if (str_eq(line, "night_wait_ms")) {
+            if (!parse_number(value, &number) || number < 0 || number > 8000)
+                return -29;
+            cfg.night_wait_ms = number;
         }
     }
     if (cfg.snapshot && !cfg.motion)
@@ -1093,6 +1101,79 @@ static int find_jpeg(const u8 *data, int length, int *body_length)
 
 /* Returns 0 when the picture was published or skipped, -1 when the MQTT socket failed. */
 static int snapshot_retry_logged;
+
+/* ---- night mode before the picture ---- */
+
+/* One value of Majestic's /metrics/night ("\n<key> <integer>\n"); the integer may be negative (-1 = not measured). */
+static int parse_metric(const char *text, int length, const char *key, int *value)
+{
+    char pattern[48];
+    struct out o = { pattern, 0, (int)sizeof(pattern) - 1, 0 };
+    const char *at;
+    int negative = 0;
+    int digits = 0;
+    int result = 0;
+
+    put_text(&o, "\n");
+    put_text(&o, key);
+    put_text(&o, " ");
+    if (o.overflow)
+        return -1;
+    pattern[o.length] = 0;
+    at = find_text(text, length, pattern);
+    if (!at)
+        return -1;
+    at += o.length;
+    if (at < text + length && *at == '-') {
+        negative = 1;
+        at++;
+    }
+    while (at < text + length && *at >= '0' && *at <= '9') {
+        if (++digits > 9)
+            return -1;
+        result = result * 10 + (*at - '0');
+        at++;
+    }
+    if (!digits || at >= text + length || (*at != '\n' && *at != '\r'))
+        return -1;
+    *value = negative ? -result : result;
+    return 0;
+}
+
+static u32 night_wait_started_ms;
+static int night_waiting; /* this picture is already waiting for night mode */
+
+/* Whether the picture may be taken now. It waits while the light has not been measured (gain -1) or Majestic is
+ * counting toward night, never longer than night_wait_ms, and never when Majestic does not answer or has no such
+ * metrics (the picture's own retry covers a Majestic that is still starting). */
+static int night_ready(u32 now)
+{
+    int length;
+    int enabled;
+    int gain;
+    int pending;
+
+    if (!cfg.night_wait_ms)
+        return 1;
+    length = http_get("/metrics/night", (u8 *)metrics, METRICS_MAX - 1, MOTION_IO_MS, 0);
+    if (length <= 0 || parse_metric(metrics, length, "night_enabled", &enabled) ||
+        parse_metric(metrics, length, "night_auto_gain_milli", &gain) ||
+        parse_metric(metrics, length, "night_auto_pending", &pending))
+        return 1;
+    if (enabled || (gain >= 0 && pending != 1))
+        return 1;
+    if (!night_waiting) {
+        night_waiting = 1;
+        night_wait_started_ms = now;
+        logmsg("snapshot: waiting for night mode");
+        return 0;
+    }
+    if (now - night_wait_started_ms >= (u32)cfg.night_wait_ms) {
+        logmsg("snapshot: night mode did not come in time");
+        return 1;
+    }
+    return 0;
+}
 
 /* Returns 0 when done (published or not a usable picture), 1 when Majestic does not answer yet, -1 when MQTT failed. */
 static int take_snapshot(void)
@@ -1915,9 +1996,16 @@ int app_main(const char *config_path)
                 int cooling = have_snapshot && now - last_snapshot_ms < (u32)cfg.snapshot_cooldown * 1000u;
 
                 snapshot_pending = 0;
-                if (!expired && !cooling) {
+                if (expired || cooling) {
+                    night_waiting = 0;
+                } else if (!night_ready(now)) {
+                    snapshot_pending = 1;
+                    snapshot_due_ms = sys_now_ms() + SNAPSHOT_RETRY_MS;
+                } else {
                     int result = take_snapshot();
 
+                    if (result != 1)
+                        night_waiting = 0;
                     if (result < 0) {
                         link_fail("publish failed");
                         break;
