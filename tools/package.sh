@@ -2,7 +2,7 @@
 # Assembles an installable package for one stage: a flat directory with the installer, the payload files and
 # SHA256SUMS, plus a .tar.gz of it that tools/upload-archive.py can send to the camera.
 #
-# Usage: tools/package.sh stage1-wifi | stage2-lcd | stage3-mqtt
+# Usage: tools/package.sh stage1-wifi | stage2-lcd | stage3-mqtt | stage4-sleep
 # Output: build/packages/<stage>/  and  build/packages/<stage>.tar.gz
 #
 # stage2-lcd needs the vendor video-output module: run tools/fetch-vendor.sh first.
@@ -29,8 +29,12 @@ case "$stage_name" in
         payload='etc/doorview/syslink_net_irq.ko etc/doorview/doorview-mqtt etc/init.d/S97doorview-mqtt'
         scripts='install.sh rollback.sh configure.sh'
         ;;
+    stage4-sleep)
+        payload='etc/doorview/syslink_poll.ko etc/doorview/syslink_net_irq.ko'
+        scripts='install.sh rollback.sh'
+        ;;
     *)
-        echo "usage: $0 stage1-wifi | stage2-lcd | stage3-mqtt" >&2
+        echo "usage: $0 stage1-wifi | stage2-lcd | stage3-mqtt | stage4-sleep" >&2
         exit 2
         ;;
 esac

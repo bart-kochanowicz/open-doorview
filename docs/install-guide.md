@@ -189,6 +189,21 @@ Create the broker settings locally in a file of mode 600 (`host=`, `port=`, `use
 
 Rollback: upload the same package again and run `sh rollback.sh` from it. It restores the stage 2 driver from the copy the installer kept and removes the daemon and its hook; `mqtt.conf` (credentials) stays until you delete it.
 
+## Step 9 (optional). Stage 4: drivers for the factory power cycle
+
+Replaces two drivers so that the camera can be put to sleep and woken by the PIR: `syslink_poll.ko` accepts every wake-up reason the coprocessor reports (the stage 1 driver accepted only `poweron`) and `syslink_net_irq.ko` adds two write-only parameters, `mcu` (PIR on/off and sensitivity, nothing else is accepted) and `standby` (the factory sequence `8a:77 07`, `9a:03`, answer `8a:61 01`). It adds no boot hook: **nothing sleeps by itself**. It needs stage 3 and expects exactly the shipped stage 1 and stage 3 drivers.
+
+```sh
+tools/package.sh stage4-sleep
+python3 tools/upload-archive.py build/packages/stage4-sleep.tar.gz "$DOORVIEW_PW"
+# on the camera:
+cd /tmp/doorview-upload && sh install.sh .       # prints SLEEP_INSTALLED
+```
+
+The new drivers load at the next cold start; a software reboot would load them too but triggers the early-boot resets (see [known limits](known-limits.md)). To try them without a restart, see [factory firmware](factory-firmware.md); the owner of the unit used `echo 780100 > /sys/module/syslink_net/parameters/mcu` (PIR on) and `echo 1 > /sys/module/syslink_net/parameters/standby` after `sync`. **The sleeping SoC wakes by the PIR, the key or the power button; if it does not, press the power button.** Never send any other command to the coprocessor.
+
+Rollback: upload the package again and run `sh rollback.sh`. It puts back the two drivers from `syslink_poll.ko.before-sleep` and `syslink_net_irq.ko.before-sleep`. If the camera does not come up after a cold start, log in on the UART during one of its boot windows and copy those two files over the drivers.
+
 ## Verification checklist
 
 - [ ] Console shows `U-Boot 2022.10` and `Linux version 4.9.37`.
