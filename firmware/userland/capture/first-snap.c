@@ -172,7 +172,7 @@ int puts(const char *text)
 
 static void say(int fd, const char *first, const char *second)
 {
-    struct line line = {.length = 0};
+    struct line line = { .length = 0 };
     add_text(&line, first);
     add_text(&line, second);
     finish(&line, fd);
@@ -192,7 +192,7 @@ static void add_time(struct line *line)
 
 static void step(const char *name, long result)
 {
-    struct line line = {.length = 0};
+    struct line line = { .length = 0 };
     add_time(&line);
     add_text(&line, name);
     add_text(&line, ": 0x");
@@ -202,53 +202,53 @@ static void step(const char *name, long result)
 
 /* ---- the vendor functions, looked up by name ---- */
 
-#define VENDOR_FUNCTIONS(X) \
-    X(GK_S32, GK_API_SYS_Init, (void)) \
-    X(GK_S32, GK_API_SYS_Exit, (void)) \
-    X(GK_S32, GK_API_SYS_Bind, (const MPP_CHN_S *, const MPP_CHN_S *)) \
-    X(GK_S32, GK_API_SYS_UnBind, (const MPP_CHN_S *, const MPP_CHN_S *)) \
-    X(GK_S32, GK_API_SYS_GetVIVPSSMode, (VI_VPSS_MODE_S *)) \
-    X(GK_S32, GK_API_SYS_SetVIVPSSMode, (const VI_VPSS_MODE_S *)) \
-    X(GK_S32, GK_API_VB_SetConfig, (const VB_CONFIG_S *)) \
-    X(GK_S32, GK_API_VB_Init, (void)) \
-    X(GK_S32, GK_API_VB_Exit, (void)) \
-    X(GK_S32, GK_API_VI_SetDevAttr, (VI_DEV, const VI_DEV_ATTR_S *)) \
-    X(GK_S32, GK_API_VI_EnableDev, (VI_DEV)) \
-    X(GK_S32, GK_API_VI_DisableDev, (VI_DEV)) \
-    X(GK_S32, GK_API_VI_SetDevBindPipe, (VI_DEV, const VI_DEV_BIND_PIPE_S *)) \
-    X(GK_S32, GK_API_VI_CreatePipe, (VI_PIPE, const VI_PIPE_ATTR_S *)) \
-    X(GK_S32, GK_API_VI_StartPipe, (VI_PIPE)) \
-    X(GK_S32, GK_API_VI_StopPipe, (VI_PIPE)) \
-    X(GK_S32, GK_API_VI_DestroyPipe, (VI_PIPE)) \
-    X(GK_S32, GK_API_VI_SetChnAttr, (VI_PIPE, VI_CHN, const VI_CHN_ATTR_S *)) \
-    X(GK_S32, GK_API_VI_EnableChn, (VI_PIPE, VI_CHN)) \
-    X(GK_S32, GK_API_VI_DisableChn, (VI_PIPE, VI_CHN)) \
-    X(GK_S32, GK_API_ISP_MemInit, (VI_PIPE)) \
-    X(GK_S32, GK_API_ISP_SetPubAttr, (VI_PIPE, const ISP_PUB_ATTR_S *)) \
-    X(GK_S32, GK_API_ISP_Init, (VI_PIPE)) \
-    X(GK_S32, GK_API_ISP_Run, (VI_PIPE)) \
-    X(GK_S32, GK_API_ISP_Exit, (VI_PIPE)) \
-    X(GK_S32, GK_API_AE_Register, (VI_PIPE, ALG_LIB_S *)) \
-    X(GK_S32, GK_API_AE_UnRegister, (VI_PIPE, ALG_LIB_S *)) \
-    X(GK_S32, GK_API_AWB_Register, (VI_PIPE, ALG_LIB_S *)) \
-    X(GK_S32, GK_API_AWB_UnRegister, (VI_PIPE, ALG_LIB_S *)) \
-    X(GK_S32, GK_API_ISP_QueryExposureInfo, (VI_PIPE, ISP_EXP_INFO_S *)) \
-    X(GK_S32, GK_API_VPSS_CreateGrp, (VPSS_GRP, const VPSS_GRP_ATTR_S *)) \
-    X(GK_S32, GK_API_VPSS_StartGrp, (VPSS_GRP)) \
-    X(GK_S32, GK_API_VPSS_StopGrp, (VPSS_GRP)) \
-    X(GK_S32, GK_API_VPSS_DestroyGrp, (VPSS_GRP)) \
-    X(GK_S32, GK_API_VPSS_SetChnAttr, (VPSS_GRP, VPSS_CHN, const VPSS_CHN_ATTR_S *)) \
-    X(GK_S32, GK_API_VPSS_EnableChn, (VPSS_GRP, VPSS_CHN)) \
-    X(GK_S32, GK_API_VPSS_DisableChn, (VPSS_GRP, VPSS_CHN)) \
-    X(GK_S32, GK_API_VENC_CreateChn, (VENC_CHN, const VENC_CHN_ATTR_S *)) \
-    X(GK_S32, GK_API_VENC_DestroyChn, (VENC_CHN)) \
-    X(GK_S32, GK_API_VENC_GetJpegParam, (VENC_CHN, VENC_JPEG_PARAM_S *)) \
-    X(GK_S32, GK_API_VENC_SetJpegParam, (VENC_CHN, const VENC_JPEG_PARAM_S *)) \
-    X(GK_S32, GK_API_VENC_StartRecvFrame, (VENC_CHN, const VENC_RECV_PIC_PARAM_S *)) \
-    X(GK_S32, GK_API_VENC_StopRecvFrame, (VENC_CHN)) \
-    X(GK_S32, GK_API_VENC_QueryStatus, (VENC_CHN, VENC_CHN_STATUS_S *)) \
-    X(GK_S32, GK_API_VENC_GetStream, (VENC_CHN, VENC_STREAM_S *, GK_S32)) \
-    X(GK_S32, GK_API_VENC_ReleaseStream, (VENC_CHN, VENC_STREAM_S *)) \
+#define VENDOR_FUNCTIONS(X)                                                                                            \
+    X(GK_S32, GK_API_SYS_Init, (void))                                                                                 \
+    X(GK_S32, GK_API_SYS_Exit, (void))                                                                                 \
+    X(GK_S32, GK_API_SYS_Bind, (const MPP_CHN_S *, const MPP_CHN_S *))                                                 \
+    X(GK_S32, GK_API_SYS_UnBind, (const MPP_CHN_S *, const MPP_CHN_S *))                                               \
+    X(GK_S32, GK_API_SYS_GetVIVPSSMode, (VI_VPSS_MODE_S *))                                                            \
+    X(GK_S32, GK_API_SYS_SetVIVPSSMode, (const VI_VPSS_MODE_S *))                                                      \
+    X(GK_S32, GK_API_VB_SetConfig, (const VB_CONFIG_S *))                                                              \
+    X(GK_S32, GK_API_VB_Init, (void))                                                                                  \
+    X(GK_S32, GK_API_VB_Exit, (void))                                                                                  \
+    X(GK_S32, GK_API_VI_SetDevAttr, (VI_DEV, const VI_DEV_ATTR_S *))                                                   \
+    X(GK_S32, GK_API_VI_EnableDev, (VI_DEV))                                                                           \
+    X(GK_S32, GK_API_VI_DisableDev, (VI_DEV))                                                                          \
+    X(GK_S32, GK_API_VI_SetDevBindPipe, (VI_DEV, const VI_DEV_BIND_PIPE_S *))                                          \
+    X(GK_S32, GK_API_VI_CreatePipe, (VI_PIPE, const VI_PIPE_ATTR_S *))                                                 \
+    X(GK_S32, GK_API_VI_StartPipe, (VI_PIPE))                                                                          \
+    X(GK_S32, GK_API_VI_StopPipe, (VI_PIPE))                                                                           \
+    X(GK_S32, GK_API_VI_DestroyPipe, (VI_PIPE))                                                                        \
+    X(GK_S32, GK_API_VI_SetChnAttr, (VI_PIPE, VI_CHN, const VI_CHN_ATTR_S *))                                          \
+    X(GK_S32, GK_API_VI_EnableChn, (VI_PIPE, VI_CHN))                                                                  \
+    X(GK_S32, GK_API_VI_DisableChn, (VI_PIPE, VI_CHN))                                                                 \
+    X(GK_S32, GK_API_ISP_MemInit, (VI_PIPE))                                                                           \
+    X(GK_S32, GK_API_ISP_SetPubAttr, (VI_PIPE, const ISP_PUB_ATTR_S *))                                                \
+    X(GK_S32, GK_API_ISP_Init, (VI_PIPE))                                                                              \
+    X(GK_S32, GK_API_ISP_Run, (VI_PIPE))                                                                               \
+    X(GK_S32, GK_API_ISP_Exit, (VI_PIPE))                                                                              \
+    X(GK_S32, GK_API_AE_Register, (VI_PIPE, ALG_LIB_S *))                                                              \
+    X(GK_S32, GK_API_AE_UnRegister, (VI_PIPE, ALG_LIB_S *))                                                            \
+    X(GK_S32, GK_API_AWB_Register, (VI_PIPE, ALG_LIB_S *))                                                             \
+    X(GK_S32, GK_API_AWB_UnRegister, (VI_PIPE, ALG_LIB_S *))                                                           \
+    X(GK_S32, GK_API_ISP_QueryExposureInfo, (VI_PIPE, ISP_EXP_INFO_S *))                                               \
+    X(GK_S32, GK_API_VPSS_CreateGrp, (VPSS_GRP, const VPSS_GRP_ATTR_S *))                                              \
+    X(GK_S32, GK_API_VPSS_StartGrp, (VPSS_GRP))                                                                        \
+    X(GK_S32, GK_API_VPSS_StopGrp, (VPSS_GRP))                                                                         \
+    X(GK_S32, GK_API_VPSS_DestroyGrp, (VPSS_GRP))                                                                      \
+    X(GK_S32, GK_API_VPSS_SetChnAttr, (VPSS_GRP, VPSS_CHN, const VPSS_CHN_ATTR_S *))                                   \
+    X(GK_S32, GK_API_VPSS_EnableChn, (VPSS_GRP, VPSS_CHN))                                                             \
+    X(GK_S32, GK_API_VPSS_DisableChn, (VPSS_GRP, VPSS_CHN))                                                            \
+    X(GK_S32, GK_API_VENC_CreateChn, (VENC_CHN, const VENC_CHN_ATTR_S *))                                              \
+    X(GK_S32, GK_API_VENC_DestroyChn, (VENC_CHN))                                                                      \
+    X(GK_S32, GK_API_VENC_GetJpegParam, (VENC_CHN, VENC_JPEG_PARAM_S *))                                               \
+    X(GK_S32, GK_API_VENC_SetJpegParam, (VENC_CHN, const VENC_JPEG_PARAM_S *))                                         \
+    X(GK_S32, GK_API_VENC_StartRecvFrame, (VENC_CHN, const VENC_RECV_PIC_PARAM_S *))                                   \
+    X(GK_S32, GK_API_VENC_StopRecvFrame, (VENC_CHN))                                                                   \
+    X(GK_S32, GK_API_VENC_QueryStatus, (VENC_CHN, VENC_CHN_STATUS_S *))                                                \
+    X(GK_S32, GK_API_VENC_GetStream, (VENC_CHN, VENC_STREAM_S *, GK_S32))                                              \
+    X(GK_S32, GK_API_VENC_ReleaseStream, (VENC_CHN, VENC_STREAM_S *))                                                  \
     X(GK_S32, GK_API_VENC_GetFd, (VENC_CHN))
 
 #define DECLARE(type, name, arguments) static type(*p_##name) arguments;
@@ -259,7 +259,7 @@ VENDOR_FUNCTIONS(DECLARE)
  * relocations, which musl resolves only when every library is loaded at once. Three uClibc symbols they use
  * (__ctype_b, __fgetc_unlocked, _stdlib_mb_cur_max) come from the compatibility library of stage 2, so the
  * program runs with LD_LIBRARY_PATH=/etc/doorview-lcd. */
-static const char *const libraries[] = {SENSOR_LIBRARY};
+static const char *const libraries[] = { SENSOR_LIBRARY };
 
 static void *last_library;
 
@@ -271,10 +271,10 @@ static int load_vendor(void)
             return 1;
         }
     }
-#define LOOKUP(type, name, arguments) \
-    if (!(p_##name = (type(*) arguments)dlsym(NULL, #name))) { \
-        say(2, "missing ", #name); \
-        return 1; \
+#define LOOKUP(type, name, arguments)                                                                                  \
+    if (!(p_##name = (type(*) arguments)dlsym(NULL, #name))) {                                                         \
+        say(2, "missing ", #name);                                                                                     \
+        return 1;                                                                                                      \
     }
     VENDOR_FUNCTIONS(LOOKUP)
     return 0;
@@ -283,8 +283,8 @@ static int load_vendor(void)
 /* ---- the pipeline ---- */
 
 static ISP_SNS_OBJ_S *sensor;
-static ALG_LIB_S ae_library = {.s32Id = 0, .acLibName = ISP_AE_LIB_NAME};
-static ALG_LIB_S awb_library = {.s32Id = 0, .acLibName = ISP_AWB_LIB_NAME};
+static ALG_LIB_S ae_library = { .s32Id = 0, .acLibName = ISP_AE_LIB_NAME };
+static ALG_LIB_S awb_library = { .s32Id = 0, .acLibName = ISP_AWB_LIB_NAME };
 static ISP_EXP_INFO_S exposure;
 
 static int width = 1280, height = 720, quality = 55, fps = 30, pictures = 5;
@@ -304,7 +304,8 @@ static int configure_buffers(void)
     config.u32MaxPoolCnt = 2;
     config.astCommPool[0].u64BlkSize = align_up(align_up(SENSOR_WIDTH * 10, 8) / 8, 16) * SENSOR_HEIGHT;
     config.astCommPool[0].u32BlkCnt = 3;
-    config.astCommPool[1].u64BlkSize = align_up(SENSOR_WIDTH, 16) * align_up(SENSOR_HEIGHT, 16) * 3 / 2 + 16 * SENSOR_HEIGHT * 3 / 2;
+    config.astCommPool[1].u64BlkSize =
+        align_up(SENSOR_WIDTH, 16) * align_up(SENSOR_HEIGHT, 16) * 3 / 2 + 16 * SENSOR_HEIGHT * 3 / 2;
     config.astCommPool[1].u32BlkCnt = 2;
     p_GK_API_SYS_Exit();
     p_GK_API_VB_Exit();
@@ -422,8 +423,8 @@ static int configure_vi(void)
     pipe.bSharpenEn = GK_TRUE;
     pipe.stFrameRate.s32SrcFrameRate = -1;
     pipe.stFrameRate.s32DstFrameRate = -1;
-    if ((result = p_GK_API_VI_SetDevBindPipe(VI_DEVICE, &bind)) || (result = p_GK_API_VI_CreatePipe(VI_PIPE_ID, &pipe)) ||
-        (result = p_GK_API_VI_StartPipe(VI_PIPE_ID))) {
+    if ((result = p_GK_API_VI_SetDevBindPipe(VI_DEVICE, &bind)) ||
+        (result = p_GK_API_VI_CreatePipe(VI_PIPE_ID, &pipe)) || (result = p_GK_API_VI_StartPipe(VI_PIPE_ID))) {
         step("vi pipe", result);
         return 1;
     }
@@ -485,7 +486,7 @@ static int read_initial_exposure(ISP_INIT_ATTR_S *initial)
 static int configure_isp(void)
 {
     long result;
-    ISP_SNS_COMMBUS_U bus = {.s8I2cDev = SENSOR_I2C_BUS};
+    ISP_SNS_COMMBUS_U bus = { .s8I2cDev = SENSOR_I2C_BUS };
     if ((result = sensor->pfnSetBusInfo(VI_PIPE_ID, bus)) ||
         (result = sensor->pfnRegisterCallback(VI_PIPE_ID, &ae_library, &awb_library)) ||
         (result = p_GK_API_AE_Register(VI_PIPE_ID, &ae_library)) ||
@@ -543,8 +544,8 @@ static int configure_vpss(void)
         step("vpss group", result);
         return 1;
     }
-    MPP_CHN_S source = {.enModId = MOD_ID_VI, .s32DevId = VI_PIPE_ID, .s32ChnId = VI_CHANNEL};
-    MPP_CHN_S destination = {.enModId = MOD_ID_VPSS, .s32DevId = VPSS_GROUP, .s32ChnId = 0};
+    MPP_CHN_S source = { .enModId = MOD_ID_VI, .s32DevId = VI_PIPE_ID, .s32ChnId = VI_CHANNEL };
+    MPP_CHN_S destination = { .enModId = MOD_ID_VPSS, .s32DevId = VPSS_GROUP, .s32ChnId = 0 };
     if ((result = p_GK_API_SYS_Bind(&source, &destination))) {
         step("vi to vpss", result);
         return 1;
@@ -593,8 +594,8 @@ static int configure_venc(void)
         jpeg.u32Qfactor = (GK_U32)quality;
         p_GK_API_VENC_SetJpegParam(VENC_CHANNEL, &jpeg);
     }
-    MPP_CHN_S source = {.enModId = MOD_ID_VPSS, .s32DevId = VPSS_GROUP, .s32ChnId = VPSS_CHANNEL};
-    MPP_CHN_S destination = {.enModId = MOD_ID_VENC, .s32DevId = 0, .s32ChnId = VENC_CHANNEL};
+    MPP_CHN_S source = { .enModId = MOD_ID_VPSS, .s32DevId = VPSS_GROUP, .s32ChnId = VPSS_CHANNEL };
+    MPP_CHN_S destination = { .enModId = MOD_ID_VENC, .s32DevId = 0, .s32ChnId = VENC_CHANNEL };
     if ((result = p_GK_API_SYS_Bind(&source, &destination))) {
         step("vpss to jpeg", result);
         return 1;
@@ -616,7 +617,7 @@ static void print_exposure(const char *label)
 {
     if (p_GK_API_ISP_QueryExposureInfo(VI_PIPE_ID, &exposure))
         return;
-    struct line line = {.length = 0};
+    struct line line = { .length = 0 };
     add_text(&line, "  ");
     add_text(&line, label);
     add_field(&line, ": luma ", exposure.u8AveLum);
@@ -635,7 +636,7 @@ static void print_exposure(const char *label)
 
 static int write_picture(int index, VENC_STREAM_S *stream)
 {
-    struct line path = {.length = 0};
+    struct line path = { .length = 0 };
     add_text(&path, prefix);
     add_text(&path, "-");
     add_number(&path, (unsigned long)index, 10, 0);
@@ -655,7 +656,7 @@ static int write_picture(int index, VENC_STREAM_S *stream)
         bytes += length;
     }
     syscall(__NR_close, fd);
-    struct line line = {.length = 0};
+    struct line line = { .length = 0 };
     add_time(&line);
     add_field(&line, "picture ", (unsigned long)index);
     add_field(&line, ": ", bytes);
@@ -667,13 +668,13 @@ static int write_picture(int index, VENC_STREAM_S *stream)
 
 static int capture(void)
 {
-    VENC_RECV_PIC_PARAM_S receive = {.s32RecvPicNum = pictures};
+    VENC_RECV_PIC_PARAM_S receive = { .s32RecvPicNum = pictures };
     long result = p_GK_API_VENC_StartRecvFrame(VENC_CHANNEL, &receive);
     if (result) {
         step("start receiving", result);
         return 1;
     }
-    struct pollfd32 wait = {.fd = p_GK_API_VENC_GetFd(VENC_CHANNEL), .events = POLLIN};
+    struct pollfd32 wait = { .fd = p_GK_API_VENC_GetFd(VENC_CHANNEL), .events = POLLIN };
     static VENC_PACK_S packs[MAX_PACKS];
     for (int index = 1; index <= pictures; ++index) {
         wait.revents = 0;
@@ -704,7 +705,7 @@ static int capture(void)
         }
     }
     /* The line for -e on the next run. */
-    struct line line = {.length = 0};
+    struct line line = { .length = 0 };
     add_field(&line, "state: ", exposure.u32ExpTime);
     add_field(&line, " ", exposure.u32AGain);
     add_field(&line, " ", exposure.u32DGain);
@@ -719,10 +720,10 @@ static int capture(void)
 /* Undoes as much as was set up, so that Majestic can start afterwards; errors are only reported. */
 static void tear_down(int isp_running, unsigned long isp)
 {
-    MPP_CHN_S vi = {.enModId = MOD_ID_VI, .s32DevId = VI_PIPE_ID, .s32ChnId = VI_CHANNEL};
-    MPP_CHN_S vpss_in = {.enModId = MOD_ID_VPSS, .s32DevId = VPSS_GROUP, .s32ChnId = 0};
-    MPP_CHN_S vpss_out = {.enModId = MOD_ID_VPSS, .s32DevId = VPSS_GROUP, .s32ChnId = VPSS_CHANNEL};
-    MPP_CHN_S venc = {.enModId = MOD_ID_VENC, .s32DevId = 0, .s32ChnId = VENC_CHANNEL};
+    MPP_CHN_S vi = { .enModId = MOD_ID_VI, .s32DevId = VI_PIPE_ID, .s32ChnId = VI_CHANNEL };
+    MPP_CHN_S vpss_in = { .enModId = MOD_ID_VPSS, .s32DevId = VPSS_GROUP, .s32ChnId = 0 };
+    MPP_CHN_S vpss_out = { .enModId = MOD_ID_VPSS, .s32DevId = VPSS_GROUP, .s32ChnId = VPSS_CHANNEL };
+    MPP_CHN_S venc = { .enModId = MOD_ID_VENC, .s32DevId = 0, .s32ChnId = VENC_CHANNEL };
     p_GK_API_VENC_StopRecvFrame(VENC_CHANNEL);
     p_GK_API_SYS_UnBind(&vpss_out, &venc);
     p_GK_API_VENC_DestroyChn(VENC_CHANNEL);
@@ -772,14 +773,34 @@ static int parse_arguments(int count, char **arguments)
         if (!value || flag[0] != '-' || !flag[1] || flag[2])
             return 1;
         switch (flag[1]) {
-        case 'n': if (parse_number(value, 1, MAX_PICTURES, &pictures)) return 1; break;
-        case 'w': if (parse_number(value, 64, SENSOR_WIDTH, &width) || width % 2) return 1; break;
-        case 'h': if (parse_number(value, 64, SENSOR_HEIGHT, &height) || height % 2) return 1; break;
-        case 'q': if (parse_number(value, 1, 99, &quality)) return 1; break;
-        case 'f': if (parse_number(value, 5, 30, &fps)) return 1; break;
-        case 'o': prefix = value; break;
-        case 'e': exposure_file = value; break;
-        default: return 1;
+        case 'n':
+            if (parse_number(value, 1, MAX_PICTURES, &pictures))
+                return 1;
+            break;
+        case 'w':
+            if (parse_number(value, 64, SENSOR_WIDTH, &width) || width % 2)
+                return 1;
+            break;
+        case 'h':
+            if (parse_number(value, 64, SENSOR_HEIGHT, &height) || height % 2)
+                return 1;
+            break;
+        case 'q':
+            if (parse_number(value, 1, 99, &quality))
+                return 1;
+            break;
+        case 'f':
+            if (parse_number(value, 5, 30, &fps))
+                return 1;
+            break;
+        case 'o':
+            prefix = value;
+            break;
+        case 'e':
+            exposure_file = value;
+            break;
+        default:
+            return 1;
         }
     }
     return 0;

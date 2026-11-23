@@ -184,7 +184,7 @@ void sys_reboot(void)
 static void ignore_sigpipe(void)
 {
     /* The ARM kernel_sigaction: handler (SIG_IGN is 1), flags, restorer, then an 8-byte signal mask. */
-    unsigned long action[5] = {1, 0, 0, 0, 0};
+    unsigned long action[5] = { 1, 0, 0, 0, 0 };
     register long r0 __asm__("r0") = 13; /* SIGPIPE */
     register long r1 __asm__("r1") = (long)action;
     register long r2 __asm__("r2") = 0;

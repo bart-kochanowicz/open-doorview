@@ -18,6 +18,22 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
+. "$here/pins.sh"
+
+# The earlier stage sources, from git history (see OLD_SOURCES_COMMIT in pins.sh).
+old=$repo/build/old-src
+rm -rf "$old"
+mkdir -p "$old"
+if git -C "$repo" cat-file -e "$OLD_SOURCES_COMMIT^{commit}" 2> /dev/null; then
+    paths=
+    for dir in $OLD_KERNEL_SOURCES; do paths="$paths firmware/kernel/$dir"; done
+    for dir in $OLD_MQTT_SOURCES; do paths="$paths firmware/userland/$dir"; done
+    # shellcheck disable=SC2086 # the list is split on purpose
+    git -C "$repo" archive "$OLD_SOURCES_COMMIT" $paths | tar -x -C "$old"
+else
+    echo "commit $OLD_SOURCES_COMMIT is not in this clone (git fetch --unshallow): the earlier stage binaries are not rebuilt" >&2
+fi
+
 docker build -q -t open-doorview-build "$here/build" > /dev/null
 mkdir -p "$repo/build/rootfs-libs"
 if [ -n "$libs" ] && [ "$(cd "$libs" && pwd)" != "$repo/build/rootfs-libs" ]; then

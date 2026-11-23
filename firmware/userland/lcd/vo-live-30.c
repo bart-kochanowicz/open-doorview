@@ -26,11 +26,9 @@ static long syscall3(long number, long first, long second, long third)
 /* The vendor library passes a 32-bit offset even under musl. */
 extern long syscall(long number, ...);
 
-void *mmap(void *address, size_t length, int protection, int flags, int fd,
-           unsigned long offset)
+void *mmap(void *address, size_t length, int protection, int flags, int fd, unsigned long offset)
 {
-    return (void *)syscall(__NR_mmap2, address, length, protection, flags, fd,
-                           offset >> 12);
+    return (void *)syscall(__NR_mmap2, address, length, protection, flags, fd, offset >> 12);
 }
 
 extern void *memcpy(void *, const void *, size_t);
@@ -132,7 +130,7 @@ static int show_live(void)
         .enPixelFormat = PIXEL_FORMAT_YVU_SEMIPLANAR_420,
         .enDynamicRange = DYNAMIC_RANGE_SDR8,
         .enCompressMode = COMPRESS_MODE_NONE,
-        .stFrameRate = {.s32SrcFrameRate = 25, .s32DstFrameRate = 5},
+        .stFrameRate = { .s32SrcFrameRate = 25, .s32DstFrameRate = 5 },
         .u32Depth = 1,
     };
     static VO_PUB_ATTR_S attributes = {
@@ -156,18 +154,21 @@ static int show_live(void)
         .u32DevDiv = 3,
     };
     static const VO_VIDEO_LAYER_ATTR_S layer = {
-        .stDispRect = {.u32Width = WIDTH, .u32Height = HEIGHT},
-        .stImageSize = {.u32Width = WIDTH, .u32Height = HEIGHT},
+        .stDispRect = { .u32Width = WIDTH, .u32Height = HEIGHT },
+        .stImageSize = { .u32Width = WIDTH, .u32Height = HEIGHT },
         .u32DispFrmRt = 30,
         .enPixFormat = PIXEL_FORMAT_YVU_SEMIPLANAR_420,
         .enDstDynamicRange = DYNAMIC_RANGE_SDR8,
     };
     static const VO_CSC_S csc = {
         .enCscMatrix = VO_CSC_MATRIX_BT601_TO_RGB_PC,
-        .u32Luma = 50, .u32Contrast = 50, .u32Hue = 50, .u32Satuature = 50,
+        .u32Luma = 50,
+        .u32Contrast = 50,
+        .u32Hue = 50,
+        .u32Satuature = 50,
     };
     static const VO_CHN_ATTR_S channel = {
-        .stRect = {.u32Width = WIDTH, .u32Height = HEIGHT},
+        .stRect = { .u32Width = WIDTH, .u32Height = HEIGHT },
     };
     static VPSS_CHN_ATTR_S previous;
     static VIDEO_FRAME_INFO_S frame;
@@ -188,8 +189,7 @@ static int show_live(void)
 
     if (REPORT("Set public attributes", GK_API_VO_SetPubAttr(0, &attributes)) ||
         REPORT("Set frame rate", GK_API_VO_SetDevFrameRate(0, 30)) ||
-        REPORT("Set clock", GK_API_VO_SetUserIntfSyncInfo(0, &clock)) ||
-        REPORT("Enable device", GK_API_VO_Enable(0)))
+        REPORT("Set clock", GK_API_VO_SetUserIntfSyncInfo(0, &clock)) || REPORT("Enable device", GK_API_VO_Enable(0)))
         goto disable_capture;
     if (REPORT("Set layer attributes", GK_API_VO_SetVideoLayerAttr(0, &layer)) ||
         REPORT("Enable layer", GK_API_VO_EnableVideoLayer(0)))
@@ -219,8 +219,7 @@ static int show_live(void)
         }
         if (frame.stVFrame.u32Width != WIDTH || frame.stVFrame.u32Height != HEIGHT ||
             frame.stVFrame.enPixelFormat != PIXEL_FORMAT_YVU_SEMIPLANAR_420 ||
-            frame.stVFrame.enCompressMode != COMPRESS_MODE_NONE ||
-            frame.stVFrame.u64PTS <= last_pts) {
+            frame.stVFrame.enCompressMode != COMPRESS_MODE_NONE || frame.stVFrame.u64PTS <= last_pts) {
             REPORT("Validate VPSS frame", -1);
             result = -1;
         } else {
@@ -238,20 +237,20 @@ static int show_live(void)
     REPORT("Live frames submitted (hex)", submitted);
     failed = submitted < 150;
 
- disable_channel:
+disable_channel:
     failed |= REPORT("Disable channel", GK_API_VO_DisableChn(0, 0));
- disable_layer:
+disable_layer:
     failed |= REPORT("Disable layer", GK_API_VO_DisableVideoLayer(0));
- disable_device:
+disable_device:
     failed |= REPORT("Disable device", GK_API_VO_Disable(0));
- disable_capture:
+disable_capture:
     failed |= REPORT("Disable LCD VPSS channel", GK_API_VPSS_DisableChn(0, LCD_VPSS_CHANNEL));
- restore_capture:
+restore_capture:
     if (previous.u32Width && previous.u32Height)
         failed |= REPORT("Restore LCD VPSS attributes", GK_API_VPSS_SetChnAttr(0, LCD_VPSS_CHANNEL, &previous));
     else
         REPORT("Initially unconfigured VPSS channel left disabled", 0);
- destroy_pool:
+destroy_pool:
     failed |= REPORT("Destroy private pool", GK_API_VB_DestroyPool(pool));
     return failed;
 }

@@ -30,61 +30,42 @@ make -C "$src/linux" ARCH=arm CROSS_COMPILE=$cross olddefconfig > /dev/null
 make -C "$src/linux" ARCH=arm CROSS_COMPILE=$cross modules_prepare > /dev/null
 echo "kernel release: $(cat "$src/linux/include/config/kernel.release")"
 
-build_module() { # <source dir under firmware/kernel> <module name> <output name>
+build_module() { # <source dir> <module name> <output name>
     dir=$1; module=$2; name=$3
-    work=$repo/build/modules/$dir
+    work=$repo/build/modules/$(basename "$dir")
     rm -rf "$work"
     mkdir -p "$work"
-    cp "$repo/firmware/kernel/$dir/"* "$work/"
+    cp "$dir/"* "$work/"
     make -C "$src/linux" ARCH=arm CROSS_COMPILE=$cross M="$work" modules > "$work/build.log" 2>&1 || { cat "$work/build.log"; exit 1; }
     cp "$work/$module.ko" "$out/kernel/$name"
 }
+old=$repo/build/old-src/firmware
 echo "== kernel modules =="
-build_module syslink-poll-stage1 syslink_poll syslink_poll-stage1.ko
-build_module syslink-handshake syslink_poll syslink_poll.ko
-build_module syslink-handshake syslink_bg syslink_bg.ko
-build_module syslink-net-poll syslink_net syslink_net.ko
-build_module syslink-net-irq-stage2 syslink_net syslink_net_irq-stage2.ko
-build_module syslink-net-irq-stage3 syslink_net syslink_net_irq-stage3.ko
-build_module syslink-net-irq-stage4 syslink_net syslink_net_irq-stage4.ko
-build_module syslink-net-irq-stage6 syslink_net syslink_net_irq-stage6.ko
-build_module syslink-net-irq syslink_net syslink_net_irq.ko
+build_module "$repo/firmware/kernel/syslink-handshake" syslink_poll syslink_poll.ko
+build_module "$repo/firmware/kernel/syslink-handshake" syslink_bg syslink_bg.ko
+build_module "$repo/firmware/kernel/syslink-net-poll" syslink_net syslink_net.ko
+build_module "$repo/firmware/kernel/syslink-net-irq" syslink_net syslink_net_irq.ko
+# The earlier stages, from git history (tools/build.sh): syslink-poll-stage1 builds syslink_poll-stage1.ko, every
+# syslink-net-irq-stageN builds syslink_net_irq-stageN.ko.
+for dir in $OLD_KERNEL_SOURCES; do
+    [ -d "$old/kernel/$dir" ] || continue
+    case "$dir" in
+        syslink-poll-*) build_module "$old/kernel/$dir" syslink_poll "syslink_poll-${dir#syslink-poll-}.ko" ;;
+        syslink-net-irq-*) build_module "$old/kernel/$dir" syslink_net "syslink_net_irq-${dir#syslink-net-irq-}.ko" ;;
+    esac
+done
+
+build_daemon() { # <source dir> <output name>
+    ${cross}gcc -Os -mfloat-abi=soft -march=armv7-a -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector \
+        -nostdlib -static -Wl,--gc-sections -Wl,--build-id -o "$out/userland/$2" "$1/doorview-mqtt.c" "$1/sys-arm.c"
+    ${cross}strip "$out/userland/$2"
+}
 
 echo "== camera binaries =="
-stage12_mqtt=$repo/firmware/userland/mqtt-stage12
-${cross}gcc -Os -mfloat-abi=soft -march=armv7-a -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector \
-    -nostdlib -static -Wl,--gc-sections -Wl,--build-id -o "$out/userland/doorview-mqtt-stage12" "$stage12_mqtt/doorview-mqtt.c" "$stage12_mqtt/sys-arm.c"
-${cross}strip "$out/userland/doorview-mqtt-stage12"
-
-stage10_mqtt=$repo/firmware/userland/mqtt-stage10
-${cross}gcc -Os -mfloat-abi=soft -march=armv7-a -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector \
-    -nostdlib -static -Wl,--gc-sections -Wl,--build-id -o "$out/userland/doorview-mqtt-stage10" "$stage10_mqtt/doorview-mqtt.c" "$stage10_mqtt/sys-arm.c"
-${cross}strip "$out/userland/doorview-mqtt-stage10"
-
-stage7_mqtt=$repo/firmware/userland/mqtt-stage7
-${cross}gcc -Os -mfloat-abi=soft -march=armv7-a -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector \
-    -nostdlib -static -Wl,--gc-sections -Wl,--build-id -o "$out/userland/doorview-mqtt-stage7" "$stage7_mqtt/doorview-mqtt.c" "$stage7_mqtt/sys-arm.c"
-${cross}strip "$out/userland/doorview-mqtt-stage7"
-
-stage6_mqtt=$repo/firmware/userland/mqtt-stage6
-${cross}gcc -Os -mfloat-abi=soft -march=armv7-a -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector \
-    -nostdlib -static -Wl,--gc-sections -Wl,--build-id -o "$out/userland/doorview-mqtt-stage6" "$stage6_mqtt/doorview-mqtt.c" "$stage6_mqtt/sys-arm.c"
-${cross}strip "$out/userland/doorview-mqtt-stage6"
-
-stage5_mqtt=$repo/firmware/userland/mqtt-stage5
-${cross}gcc -Os -mfloat-abi=soft -march=armv7-a -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector \
-    -nostdlib -static -Wl,--gc-sections -Wl,--build-id -o "$out/userland/doorview-mqtt-stage5" "$stage5_mqtt/doorview-mqtt.c" "$stage5_mqtt/sys-arm.c"
-${cross}strip "$out/userland/doorview-mqtt-stage5"
-
-old_mqtt=$repo/firmware/userland/mqtt-stage3
-${cross}gcc -Os -mfloat-abi=soft -march=armv7-a -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector \
-    -nostdlib -static -Wl,--gc-sections -Wl,--build-id -o "$out/userland/doorview-mqtt-stage3" "$old_mqtt/doorview-mqtt.c" "$old_mqtt/sys-arm.c"
-${cross}strip "$out/userland/doorview-mqtt-stage3"
-
-mqtt=$repo/firmware/userland/mqtt
-${cross}gcc -Os -mfloat-abi=soft -march=armv7-a -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector \
-    -nostdlib -static -Wl,--gc-sections -Wl,--build-id -o "$out/userland/doorview-mqtt" "$mqtt/doorview-mqtt.c" "$mqtt/sys-arm.c"
-${cross}strip "$out/userland/doorview-mqtt"
+build_daemon "$repo/firmware/userland/mqtt" doorview-mqtt
+for dir in $OLD_MQTT_SOURCES; do
+    if [ -d "$old/userland/$dir" ]; then build_daemon "$old/userland/$dir" "doorview-$dir"; fi
+done
 
 lcd=$repo/firmware/userland/lcd
 ${cross}gcc -Os -mfloat-abi=soft -march=armv7-a -ffreestanding -fno-stack-protector -nostdlib -static -Wl,--build-id \
