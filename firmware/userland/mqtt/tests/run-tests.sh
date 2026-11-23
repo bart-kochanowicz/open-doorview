@@ -968,6 +968,7 @@ pir_line() { # <01 = alarm start, 00 = alarm end>
 }
 start_pir_daemon() { # <extra config lines, separated by \n>
     : > "$work/mcu"; : > "$work/standby"; : > "$work/reason"; : > "$sleep_log"; : > "$work/snap.log"
+    [ -z "${PIR_REASON:-}" ] || printf '%s\n' "$PIR_REASON" > "$work/reason"
     { cat "$work/mqtt.conf"; printf 'kmsg=%s/kmsg-pir\nmotion=1\nmotion_port=%s\nmotion_hold=2\nsnapshot=1\nsnapshot_cooldown=1\npir_motion=1\nmotion_video=0\nreason_file=%s/reason\nmcu_parameter=%s/mcu\nstandby_parameter=%s/standby\nstay_awake_file=%s/stay\n%b\n' "$work" "$motion_port" "$work" "$work" "$work" "$work" "${1:-}"; } > "$work/mqtt-pir.conf"
     "$work/doorview-mqtt-asan" "$work/mqtt-pir.conf" > "$work/daemon-pir.log" 2>&1 &
     daemon_pir_pid=$!
@@ -1024,6 +1025,26 @@ start_pir_daemon 'sleep_after=10\nsleep_usb=1\npir_sensitivity=3'
 check 'it sleeps after the idle time' wait_sleep 25
 check 'the writes are: sensitivity, PIR on (start), then timer off, sensitivity, PIR on (sleep)' test "$(cat "$work/mcu")" = "$(printf '790003\n780100\n7b00000000\n790003\n780100')"
 kill_daemon
+
+echo '-- a PIR wake-up: the picture first, then the PIR setup, even while Majestic is still starting'
+# Earlier sections may have started more than one stand-in; none may answer now.
+pkill -f "$work/fake-majestic.py" 2> /dev/null
+majestic_pid=
+sleep_s 0.5
+PIR_REASON=pir start_pir_daemon 'pir_sensitivity=2\nsnapshot_delay_ms=0'
+check 'the wake-up is reported as motion at once' wait_for "$sleep_log" '/motion|ON' 8
+sleep_s 1.5
+check 'no picture while Majestic does not answer' test "$(snap_total_lines)" = 0
+check_not 'and the PIR is not set up before the picture' grep -q 'PIR is on' "$work/daemon-pir.log"
+start_majestic
+check 'the picture follows as soon as Majestic answers' test "$(for i in $(seq 1 80); do [ "$(snap_total_lines)" -ge 1 ] && echo 1 && break; sleep_s 0.1; done)" = 1
+check 'the picture is the one Majestic served' test "$(tail -n 1 "$work/snap.log" | cut -d'|' -f3)" = "$(cat "$work/mj/img.hex")"
+check 'Majestic not answering is logged once, not at every try' test "$(grep -c 'Majestic does not answer' "$work/daemon-pir.log")" = 1
+check 'then the PIR is set up' wait_for "$work/daemon-pir.log" 'PIR is on' 5
+check 'after the picture, not before' sh -c "awk '/snapshot published/ && !p {p=NR} /PIR is on/ && !q {q=NR} END {exit !(p && q && p < q)}' '$work/daemon-pir.log'"
+check 'the setup writes the sensitivity and the PIR switch' test "$(cat "$work/mcu")" = "$(printf '790002\n780100')"
+kill_daemon
+PIR_REASON=
 
 echo '== configuration =='
 # The daemon exits with 2 when the configuration is refused and, on a host without a readable kernel log (the test

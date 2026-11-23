@@ -2,7 +2,7 @@
 # Assembles an installable package for one stage: a flat directory with the installer, the payload files and
 # SHA256SUMS, plus a .tar.gz of it that tools/upload-archive.py can send to the camera.
 #
-# Usage: tools/package.sh stage1-wifi | stage2-lcd | stage3-mqtt | stage4-sleep | stage5-sleep-daemon | stage6-wake-timer | stage7-pir-motion | stage8-fast-boot | stage9-lean
+# Usage: tools/package.sh stage1-wifi | stage2-lcd | stage3-mqtt | stage4-sleep | stage5-sleep-daemon | stage6-wake-timer | stage7-pir-motion | stage8-fast-boot | stage9-lean | stage10-early-daemon
 # Output: build/packages/<stage>/  and  build/packages/<stage>.tar.gz
 #
 # stage2-lcd needs the vendor video-output module: run tools/fetch-vendor.sh first.
@@ -53,8 +53,12 @@ case "$stage_name" in
         payload='etc/init.d/rcS usr/bin/load_goke'
         scripts='install.sh rollback.sh'
         ;;
+    stage10-early-daemon)
+        payload='etc/init.d/rcS etc/doorview/doorview-mqtt'
+        scripts='install.sh rollback.sh'
+        ;;
     *)
-        echo "usage: $0 stage1-wifi | stage2-lcd | stage3-mqtt | stage4-sleep | stage5-sleep-daemon | stage6-wake-timer | stage7-pir-motion | stage8-fast-boot | stage9-lean" >&2
+        echo "usage: $0 stage1-wifi | stage2-lcd | stage3-mqtt | stage4-sleep | stage5-sleep-daemon | stage6-wake-timer | stage7-pir-motion | stage8-fast-boot | stage9-lean | stage10-early-daemon" >&2
         exit 2
         ;;
 esac

@@ -273,6 +273,19 @@ Three changes were made by hand on the unit on 2026-11-23, each after two identi
 - **The web panel is hidden:** `rm -rf /var/www` on the running system replaces every file of the panel (pages and CGI scripts, among them a browser console) by an overlay whiteout; three empty directories remain because this overlay cannot hide directories. Majestic's own endpoints (`/image.jpg`, `/metrics`) keep working; `/` answers 500 and the CGI scripts 404. To undo: `rm -rf /overlay/root/var/www` and restart.
 - **U-Boot:** `fw_setenv extras quiet` (the kernel stops writing its messages to the UART at 115200 baud, about 0.7 s) after `fw_setenv bootdelay 0` (1 s). Only these variables changed. To undo: `fw_setenv extras` and `fw_setenv bootdelay 1`.
 
+## Step 15 (optional). Stage 10: the daemon starts with the Wi-Fi link
+
+Stage 10 (`stage10-early-daemon`) replaces `/etc/init.d/rcS` (the stage 9 script that starts the MQTT daemon right after the Wi-Fi link, in parallel with the camera stack, and brings up only the loopback of the stock network start) and `/etc/doorview/doorview-mqtt` (the build that retries the first picture every 200 ms while Majestic is still starting, sets the PIR up after that picture, and retries a busy coprocessor command instead of waiting a fixed time). Needs stages 7 and 9; the old files are kept as `/etc/doorview/<name>.before-early`.
+
+```sh
+tools/package.sh stage10-early-daemon
+python3 tools/upload-archive.py build/packages/stage10-early-daemon.tar.gz "$DOORVIEW_PW"
+# on the camera:
+cd /tmp/doorview-upload && sh install.sh .       # prints EARLY_DAEMON_INSTALLED
+```
+
+Also changed by hand on the unit (2026-11-23): the kernel parameters in the U-Boot variable `extras` are now `quiet printk.time=1 initcall_blacklist=femac_mdio_driver_init,femac_driver_init` (the ethernet driver, which waited 0.85 s for a PHY this camera does not have, is not started; the kernel log keeps its time stamps), and the picture is `snapshot_path=/image.jpg?width=960&height=540&qfactor=55` (about 48 KB, 1.0 s over the Wi-Fi). To undo the kernel part: `fw_setenv extras quiet`.
+
 ## Verification checklist
 
 - [ ] Console shows `U-Boot 2022.10` and `Linux version 4.9.37`.
