@@ -33,6 +33,7 @@
 #define SNAPSHOT_HEAD 256 /* room in front of the response for the MQTT header */
 #define SNAPSHOT_IO_MS 5000u
 #define SNAPSHOT_PENDING_MS 10000u
+#define SNAPSHOT_RETRY_MS 200u /* while Majestic is still starting */
 
 struct config {
     u32 address;
@@ -1091,6 +1092,9 @@ static int find_jpeg(const u8 *data, int length, int *body_length)
 }
 
 /* Returns 0 when the picture was published or skipped, -1 when the MQTT socket failed. */
+static int snapshot_retry_logged;
+
+/* Returns 0 when done (published or not a usable picture), 1 when Majestic does not answer yet, -1 when MQTT failed. */
 static int take_snapshot(void)
 {
     char name[96];
@@ -1103,9 +1107,14 @@ static int take_snapshot(void)
     u8 *start;
 
     if (length < 0) {
-        logmsg("snapshot: Majestic does not answer");
-        return 0;
+        /* Majestic may still be starting after a wake-up: the caller tries again until the picture is due no more. */
+        if (!snapshot_retry_logged) {
+            snapshot_retry_logged = 1;
+            logmsg("snapshot: Majestic does not answer");
+        }
+        return 1;
     }
+    snapshot_retry_logged = 0;
     if (length >= SNAPSHOT_RESPONSE_MAX) {
         logmsg("snapshot: picture too large");
         return 0;
@@ -1598,7 +1607,7 @@ static void read_socket(u32 now)
 
 /* ---- sleep (off unless sleep_after is set) ---- */
 
-#define SLEEP_PIR_SETTLE_MS 500u
+#define SLEEP_PIR_SETTLE_MS 100u
 #define SLEEP_POWER_OFF_WAIT_MS 30000u
 #define SLEEP_RETRY_MS 300000u
 
@@ -1607,16 +1616,27 @@ static u32 sleep_retry_ms;
 static int wake_pir_pending;
 static int sleep_logged_skip;
 
+/* The syslink driver takes one coprocessor command at a time and answers a second one with EBUSY until the first is sent
+ * (a fraction of a second): such a write is tried again for up to a second. */
 static int write_text(const char *path, const char *text)
 {
-    int fd = sys_open_write(path);
-    int result;
+    int attempt;
 
-    if (fd < 0)
-        return -1;
-    result = sys_write(fd, text, str_len(text)) == str_len(text) ? 0 : -1;
-    sys_close(fd);
-    return result;
+    for (attempt = 0; attempt < 20; attempt++) {
+        int fd = sys_open_write(path);
+        int result;
+
+        if (fd < 0)
+            return -1;
+        result = sys_write(fd, text, str_len(text));
+        sys_close(fd);
+        if (result == str_len(text))
+            return 0;
+        if (result != -16) /* EBUSY */
+            return -1;
+        sys_wait(-1, -1, 0, 50);
+    }
+    return -1;
 }
 
 /* The syslink_poll parameter holds the reason the coprocessor gave for starting the SoC ("pir", "key", "poweron"...). */
@@ -1887,7 +1907,8 @@ int app_main(const char *config_path)
             }
             if (wake_pir_pending || pir_alarm_pending)
                 report_pir_motion(now);
-            if (cfg.pir_motion && !pir_setup_done)
+            /* After the wake-up picture: the PIR is already on after a PIR wake-up, the picture comes first. */
+            if (cfg.pir_motion && !pir_setup_done && !snapshot_pending && !wake_pir_pending)
                 pir_setup();
             if (snapshot_pending && (int)(now - snapshot_due_ms) >= 0) {
                 int expired = (int)(now - snapshot_deadline_ms) >= 0;
@@ -1895,11 +1916,18 @@ int app_main(const char *config_path)
 
                 snapshot_pending = 0;
                 if (!expired && !cooling) {
-                    last_snapshot_ms = now;
-                    have_snapshot = 1;
-                    if (take_snapshot()) {
+                    int result = take_snapshot();
+
+                    if (result < 0) {
                         link_fail("publish failed");
                         break;
+                    }
+                    if (result == 1) {
+                        snapshot_pending = 1;
+                        snapshot_due_ms = sys_now_ms() + SNAPSHOT_RETRY_MS;
+                    } else {
+                        last_snapshot_ms = now;
+                        have_snapshot = 1;
                     }
                 }
             }

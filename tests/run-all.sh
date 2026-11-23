@@ -21,6 +21,7 @@ run firmware/stage6-wake-timer/tests/run-tests.sh
 run firmware/stage7-pir-motion/tests/run-tests.sh
 run firmware/stage8-fast-boot/tests/run-tests.sh
 run firmware/stage9-lean/tests/run-tests.sh
+run firmware/stage10-early-daemon/tests/run-tests.sh
 run tools/tests/run-tests.sh
 if command -v docker > /dev/null 2>&1 && docker info > /dev/null 2>&1; then
     run firmware/userland/mqtt/tests/run-tests.sh
