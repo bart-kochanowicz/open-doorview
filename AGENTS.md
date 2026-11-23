@@ -25,7 +25,7 @@ This repository holds the recovery procedures and the custom firmware layer for 
 |---|---|
 | `README.md`, `docs/install-guide.md` | what works and the end-to-end install |
 | `docs/` | procedures (`flash-layout.md`, `uart-pinout.md`, `openipc-flash.md`), hardware notes (`wifi-companion.md`, `factory-firmware.md`, `lcd-and-button.md`, `mqtt-home-assistant.md`), `troubleshooting.md`, `known-limits.md`, `building.md` |
-| `firmware/stage1-wifi`, `stage2-lcd`, `stage3-mqtt`, `stage4-sleep`, `stage5-sleep-daemon`, `stage6-wake-timer`, `stage7-pir-motion`, `stage8-fast-boot`, `stage9-lean`, `stage10-early-daemon` | installable packages: installer, rollback, payload, tests. The stages form a chain; later installers pin the exact files of earlier ones by SHA-256 |
+| `firmware/stage1-wifi`, `stage2-lcd`, `stage3-mqtt`, `stage4-sleep`, `stage5-sleep-daemon`, `stage6-wake-timer`, `stage7-pir-motion`, `stage8-fast-boot`, `stage9-lean`, `stage10-early-daemon`, `stage11-wake-preview` | installable packages: installer, rollback, payload, tests. The stages form a chain; later installers pin the exact files of earlier ones by SHA-256 |
 | `firmware/kernel/` | source of every kernel module, one directory per module |
 | `firmware/userland/` | LCD/button programs and the MQTT daemon |
 | `firmware/EXPECTED-BUILDS.txt` | hashes of the binaries tested on a camera, and whether a rebuild reproduces them |
@@ -67,7 +67,7 @@ Private material lives **outside** the repository (flash dumps, overlay backups,
 1. **Measure the battery in sleep mode:** a day or more on the battery, with the wake-ups, the awake time and the last known battery value from Home Assistant. This decides whether more work on the power cycle is needed.
 2. **Observe the sleep cycle over days:** false PIR wake-ups, missed visitors, the person detector's answers (collect real positives to tune its thresholds), Wi-Fi stalls during the short awake windows.
 3. **Faster first picture:** Majestic needs about 3 s from its start to the first picture at a cold start (1.33 s at a warm restart). A minimal capture program on the vendor libraries, run from RAM first, would show whether that can be shortened; the live view would then need another source.
-4. **Front button while asleep:** the press that wakes the camera does not start the LCD preview (the coprocessor consumes it); the wake-up reason (`wifikey`) can start it.
+4. **Front button while asleep:** the press that wakes the camera does not start the LCD preview (the coprocessor consumes it). Stage 11 starts the preview after a `wifikey` wake-up; it is written and tested on a host, not installed yet.
 5. Wi-Fi health: find the cause of the data-path stalls (driver, SDIO link or coprocessor; see `docs/wifi-companion.md`). `wifi_reboot` recovers; `wifi_watchdog` (a reconnect) is unproven and off.
 6. The cause of the early-boot resets after a software reboot (two before every successful one; a cold start from the coprocessor does not have them).
 7. Signal strength and access-point info (needs the RSSI query `0x28`, a new coprocessor command: warn first).
