@@ -15,11 +15,15 @@
  * With night_wait_ms=<ms> the snapshot waits, at most that long, while Majestic's /metrics/night says the light has not
  * been measured yet or a switch to night is under way: a wake-up starts in day mode, and the first picture in the dark
  * would come before the IR LEDs.
+ * With wake_server=<address>:<port> and wake_pattern=<12 hex digits> it arms the coprocessor's keep-alive before every
+ * standby: while the camera sleeps the coprocessor keeps a connection to that server and wakes the SoC when the server
+ * sends the pattern (reason "wifi", docs/remote-wake.md); after such a wake-up the live view starts by itself (live=1).
  * Platform access goes through sys.h, so the same logic runs on the camera and on a test host. The code is split by
  * topic into the files in parts/, included below in order. */
 #include "sys.h"
 
 #define CONFIG_MAX 1024
+#define WAKE_PATTERN_SIZE 6
 #define PACKET_MAX 1024
 #define RECEIVE_MAX 512
 #define KMSG_MAX 2048
@@ -76,6 +80,12 @@ struct config {
     int motion_video;
     int pir_motion;
     int pir_sensitivity;
+    u32 wake_address;
+    int wake_port;
+    u8 wake_pattern[WAKE_PATTERN_SIZE];
+    int wake_pattern_set;
+    int wake_interval;
+    char wifi_parameter[128];
     char reason_file[128];
     char mcu_parameter[128];
     char standby_parameter[128];
@@ -177,6 +187,10 @@ int app_main(const char *config_path)
             }
             if (wake_pir_pending || pir_alarm_pending)
                 report_pir_motion(now);
+            if (wake_live_pending) {
+                wake_live_pending = 0;
+                live_start(now);
+            }
             /* After the wake-up picture: the PIR is already on after a PIR wake-up, the picture comes first. */
             if (cfg.pir_motion && !pir_setup_done && !snapshot_pending && !wake_pir_pending)
                 pir_setup();

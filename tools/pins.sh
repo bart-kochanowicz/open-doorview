@@ -15,8 +15,11 @@ KERNEL_CONFIG_PATH=br-ext-chip-goke/board/gk7205v200/gk7202v300.generic.config
 # them). They are not kept as copies in the tree: tools/build.sh takes them from this commit, where every one of them
 # still is, and builds them next to the current sources. A shallow clone needs "git fetch --unshallow" first.
 OLD_SOURCES_COMMIT=ad57592a98f8254f42ec74dee61a7e99d5f03619
-OLD_KERNEL_SOURCES='syslink-poll-stage1 syslink-net-irq-stage2 syslink-net-irq-stage3 syslink-net-irq-stage4 syslink-net-irq-stage6'
-OLD_MQTT_SOURCES='mqtt-stage3 mqtt-stage5 mqtt-stage6 mqtt-stage7 mqtt-stage10 mqtt-stage12'
+OLD_KERNEL_SOURCES='syslink-poll-stage1 syslink-net-irq-stage2 syslink-net-irq-stage3 syslink-net-irq-stage4 syslink-net-irq-stage6 syslink-net-irq-stage12'
+OLD_MQTT_SOURCES='mqtt-stage3 mqtt-stage5 mqtt-stage6 mqtt-stage7 mqtt-stage10 mqtt-stage12 mqtt-stage13'
+# Sources that were current on main when the next stage replaced them: <commit>:<path>:<name>, extracted as
+# firmware/kernel/<name> or firmware/userland/<name> and built like the lists above.
+OLD_RENAMED_SOURCES='ff674b4c11e11735c39750041fa84d2ef7c3e92f:firmware/kernel/syslink-net-irq:syslink-net-irq-stage12 ff674b4c11e11735c39750041fa84d2ef7c3e92f:firmware/userland/mqtt:mqtt-stage13'
 
 # Vendor LCD headers (public API of the SDK libraries that majestic also uses).
 HISILICON_REPO=https://github.com/OpenIPC/openhisilicon.git

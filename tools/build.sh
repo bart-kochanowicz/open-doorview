@@ -30,6 +30,12 @@ if git -C "$repo" cat-file -e "$OLD_SOURCES_COMMIT^{commit}" 2> /dev/null; then
     for dir in $OLD_MQTT_SOURCES; do paths="$paths firmware/userland/$dir"; done
     # shellcheck disable=SC2086 # the list is split on purpose
     git -C "$repo" archive "$OLD_SOURCES_COMMIT" $paths | tar -x -C "$old"
+    for entry in $OLD_RENAMED_SOURCES; do
+        commit=${entry%%:*}; rest=${entry#*:}; path=${rest%:*}; name=${rest##*:}
+        target=$old/$(dirname "$path")/$name
+        mkdir -p "$target"
+        git -C "$repo" archive "$commit" "$path" | tar -x -C "$target" --strip-components=3
+    done
 else
     echo "commit $OLD_SOURCES_COMMIT is not in this clone (git fetch --unshallow): the earlier stage binaries are not rebuilt" >&2
 fi

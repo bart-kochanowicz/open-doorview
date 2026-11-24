@@ -905,6 +905,51 @@ check 'wake_timer=21600 is sent as 7b followed by 60 54 00 00' wait_sleep 20
 check 'the timer comes before the PIR switch' test "$(cat "$work/mcu")" = "$(printf '7b60540000\n780100')"
 kill_daemon
 
+echo '-- wake_server and wake_pattern arm the keep-alive before the standby (docs/remote-wake.md)'
+# The four commands for the wifi parameter: no authentication, the pattern in all four entries, one server, the start.
+wake_expected=$(python3 - <<'PY'
+p = bytearray(261); p[0] = 1
+for e in range(4):
+    p[1 + 65 * e:7 + 65 * e] = bytes.fromhex("a1b2c3d4e5f6"); p[65 + 65 * e] = 6
+s = bytearray(293); s[0:5] = bytes([1, 1, 1, 45, 0]); s[5:9] = bytes([1, 8, 0xfb, 0x20])  # port 8443, little endian
+s[9:13] = bytes([10, 0, 70, 202]); s[13:21] = b"doorview"
+print("07\n2c" + p.hex() + "\n30" + s.hex() + "\n05")
+PY
+)
+: > "$work/wifi"
+start_sleep_daemon pir "$work/kmsg-battery" "wake_server=10.0.70.202:8443\nwake_pattern=A1B2C3D4E5F6\nwake_interval=45\nwifi_parameter=$work/wifi"
+check 'the standby is still requested' wait_sleep 20
+check 'the keep-alive was armed: 07, 2c with the pattern in all four entries, 30 with the server, 05' test "$(cat "$work/wifi")" = "$wake_expected"
+check 'after the timer and the PIR, which go to the mcu parameter as before' test "$(cat "$work/mcu")" = "$(printf '7b00000000\n780100')"
+check 'the log says so' grep -q 'wake-up from the network armed' "$work/daemon-sleep.log"
+kill_daemon
+start_sleep_daemon pir "$work/kmsg-battery" "wake_server=10.0.70.202:7967\nwake_pattern=a1b2c3d4e5f6\nwifi_parameter=$work/no-such-directory/wifi"
+check 'a driver without the wifi parameter: the camera sleeps anyway' wait_sleep 20
+check 'and the log says that the wake-up was refused' grep -q 'wake-up from the network refused' "$work/daemon-sleep.log"
+kill_daemon
+: > "$work/wifi"
+start_sleep_daemon pir "$work/kmsg-battery"
+check 'without wake_server nothing is armed' wait_sleep 20
+check_not 'the wifi file stays empty' test -s "$work/wifi"
+kill_daemon
+
+echo '-- a wake-up from the network starts the live view by itself'
+: > "$work/live-wake.log"
+docker exec "$broker" mosquitto_sub -h 127.0.0.1 -u home-assistant -P "$ha_password" -t 'doorview/front-door-camera/live/state' -F '%r|%p' >> "$work/live-wake.log" 2> /dev/null &
+live_wake_pid=$!
+sleep_s 0.5
+start_sleep_daemon wifi "$work/kmsg-battery" "live=1\nlive_seconds=3\nwake_server=10.0.70.202:7967\nwake_pattern=a1b2c3d4e5f6\nwifi_parameter=$work/wifi"
+check 'the wake-up reason wifi is logged' wait_for "$work/daemon-sleep.log" 'wake-up reason: wifi' 5
+check 'the live view starts without a command' wait_for "$work/live-wake.log" '|ON' 6
+check 'and ends after live_seconds' wait_for "$work/live-wake.log" '|OFF' 8
+check_not 'a wake-up from the network is not motion' grep -q '/motion|ON' "$sleep_log"
+kill_daemon
+start_sleep_daemon wifi "$work/kmsg-battery" "wake_server=10.0.70.202:7967\nwake_pattern=a1b2c3d4e5f6\nwifi_parameter=$work/wifi"
+sleep_s 3
+check_not 'without live=1 there is no live view' grep -q 'live view started' "$work/daemon-sleep.log"
+kill_daemon
+kill "$live_wake_pid" 2> /dev/null
+
 echo '-- another wake-up reason: no motion, but the same sleep'
 start_sleep_daemon poweron "$work/kmsg-battery"
 check 'a power-on wake-up is logged' wait_for "$work/daemon-sleep.log" 'wake-up reason: poweron' 5
@@ -1202,6 +1247,13 @@ check 'sleep_after=0 means off and is accepted without a snapshot' test "$(confi
 check 'a parameter path must be a clean absolute path' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nstandby_parameter=/a b\n')" = 2
 check 'wake_timer above a week is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nwake_timer=604801\n')" = 2
 check 'wake_timer 0 and a week are accepted' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nwake_timer=0\n')$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nwake_timer=604800\n')" = 33
+check 'wake_server needs a port' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nwake_server=10.0.70.202\nwake_pattern=a1b2c3d4e5f6\n')" = 2
+check 'wake_server port 0 is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nwake_server=10.0.70.202:0\nwake_pattern=a1b2c3d4e5f6\n')" = 2
+check 'wake_pattern must be 12 hex digits' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nwake_server=10.0.70.202:7967\nwake_pattern=a1b2c3d4e5\n')$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nwake_server=10.0.70.202:7967\nwake_pattern=a1b2c3d4e5f6a7\n')$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nwake_server=10.0.70.202:7967\nwake_pattern=a1b2c3d4e5fg\n')" = 222
+check 'wake_server without wake_pattern, or the other way round, is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nwake_server=10.0.70.202:7967\n')$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nwake_pattern=a1b2c3d4e5f6\n')" = 22
+check 'a wake-up server needs the sleep' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nwake_server=10.0.70.202:7967\nwake_pattern=a1b2c3d4e5f6\n')" = 2
+check 'wake_interval 10 to 3600' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nwake_server=10.0.70.202:7967\nwake_pattern=a1b2c3d4e5f6\nwake_interval=9\n')$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nwake_server=10.0.70.202:7967\nwake_pattern=a1b2c3d4e5f6\nwake_interval=3600\n')" = 23
+check 'a complete wake-up configuration is accepted' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nwake_server=10.0.70.202:7967\nwake_pattern=A1b2C3d4E5f6\n')" = 3
 check 'a relative parameter path is rejected' test "$(config_exit 'host=127.0.0.1\nmotion=1\nsnapshot=1\nsleep_after=60\nmcu_parameter=mcu\n')" = 2
 
 echo "passed=$passed failed=$failed"

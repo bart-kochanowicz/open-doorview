@@ -607,8 +607,13 @@ module_param(resume_connected, bool, 0400);
 static bool log_frames;
 module_param(log_frames, bool, 0600);
 
+/* The SDIO function setup is tried this often, this far apart (see syslink_worker). */
+#define INIT_ATTEMPTS 15
+#define INIT_RETRY_MS 200
+
 static int syslink_worker(void *arg)
 {
+    unsigned int attempt;
     struct sdio_func *func = arg;
     struct mmc_host *host = func->card->host;
     unsigned int quirks = func->card->quirks;
@@ -647,14 +652,26 @@ static int syslink_worker(void *arg)
         host->ios.clock = 12000000;
     host->ops->set_ios(host, &host->ios);
     pr_info("syslink_sdio: clock after=%u\n", host->ios.clock);
-    err = sdio_enable_func(func);
-    if (err)
-        goto out;
-    err = sdio_set_block_size(func, 16);
-    if (err)
-        goto disable;
-    sdio_writel(func, 0x55, 0x24, &err);
-    pr_info("syslink_sdio: magic write result=%d\n", err);
+    /*
+     * After a wake-up from the network the coprocessor is still closing its keep-alive when this runs, and the function
+     * can stay not ready for a while (observed 2026-11-24: the first attempt failed in more than half of those boots,
+     * one about 2 s later worked). Without heartbeats the coprocessor resets the SoC after about 10 s, so try again
+     * at short intervals instead of giving up.
+     */
+    for (attempt = 1;; attempt++) {
+        err = sdio_enable_func(func);
+        if (!err)
+            err = sdio_set_block_size(func, 16);
+        if (!err)
+            sdio_writel(func, 0x55, 0x24, &err);
+        if (!err || attempt == INIT_ATTEMPTS)
+            break;
+        pr_warn("syslink_sdio: init attempt %u failed err=%d\n", attempt, err);
+        sdio_release_host(func);
+        msleep(INIT_RETRY_MS);
+        sdio_claim_host(func);
+    }
+    pr_info("syslink_sdio: magic write result=%d attempt=%u\n", err, attempt);
     if (err)
         goto disable;
     memset(connect + 16, 0xa5, 8);
