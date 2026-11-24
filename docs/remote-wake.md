@@ -1,6 +1,6 @@
 # Waking the camera from the network
 
-The factory firmware's cloud can wake the sleeping camera for a live view. The same mechanism works without the cloud: while the SoC is off, the Wi-Fi coprocessor keeps a TCP connection to a server of our own, and an agreed 6-byte pattern sent on that connection makes it power the SoC on with the wake-up reason `wifi`. **Observed on the unit on 2026-11-24, and installed there as stage 14 ([install guide, step 19](install-guide.md#step-19-optional-stage-14-the-wake-up-from-the-network)): the daemon arms the keep-alive before every standby, and ten wake-ups from the server in a row each brought the camera to the broker in 7.5 to 8.7 s.** Home Assistant cannot trigger the server yet. The dated record, with every attempt that did not work, is in the [work log](log.md#waking-from-the-network-2026-11-24).
+The factory firmware's cloud can wake the sleeping camera for a live view. The same mechanism works without the cloud: while the SoC is off, the Wi-Fi coprocessor keeps a TCP connection to a server of our own, and an agreed 6-byte pattern sent on that connection makes it power the SoC on with the wake-up reason `wifi`. **Observed on the unit on 2026-11-24, and installed there as stage 14 ([install guide, step 19](install-guide.md#step-19-optional-stage-14-the-wake-up-from-the-network)): the daemon arms the keep-alive before every standby, and ten wake-ups from the server in a row each brought the camera to the broker in 7.5 to 8.7 s.** Home Assistant triggers it: Start in the live view of the front-door panel woke the sleeping camera, which reached the broker 8 s later (observed once, the same day). The dated record, with every attempt that did not work, is in the [work log](log.md#waking-from-the-network-2026-11-24).
 
 Evidence levels as elsewhere: **observed** (on the unit), **from the factory firmware** (read from the RTOS image), **from the coprocessor log** (its own UART, read passively), **assumption**.
 
@@ -55,14 +55,14 @@ When the SoC is on, the coprocessor stops the keep-alive and closes the connecti
 - The battery cost of the keep-alive is not measured. The coprocessor wakes its radio at every interval to send the packet.
 - On a network wake-up the coprocessor closes the PIR (`HI_PIRMNG_ClosePir`); the daemon switches it on again before every standby.
 
-## The test relay
+## The relay
 
-The server end runs next to the broker in the homelab (`doorview-wake`, TCP 7967 on the broker's address; only the camera's address may reach it). It logs what the camera sends and sends bytes only when asked on its pod-local control port (`wake <hex>` sends the pattern and closes the connection). It has no MQTT client and no credentials yet.
+The server end runs next to the broker in the homelab (`doorview-wake`, TCP 7967 on the broker's address; the firewall and the Cilium policy let only the camera's address reach it). It follows the camera's `live/set` topic on a listener of the broker that only the pod can reach and where anonymous clients may only read that topic. A non-retained `ON` while the camera holds its keep-alive connection makes the relay send the pattern and close the connection, at most once per 30 s and 20 times an hour: a wake-up costs a boot, the live view and at least `sleep_after` seconds awake. A retained `ON` is ignored, so a stale command cannot wake the camera. The pattern is in a Secret of the broker, never in clear in the homelab repository. The front-door panel keeps Start enabled while the camera is offline, so Start publishes that `ON`. Kubernetes probes the relay on a port of its own (7969), not on the camera port, so that its checks are never counted as camera connections. For tests the pod-local control port (7968) takes `wake` and `status`.
 
 ## What is still missing
 
-1. The relay with an MQTT command from Home Assistant and a rate limit (a wake-up costs a boot, the live view and at least `sleep_after` seconds awake), and a button in Home Assistant.
-2. The battery cost, measured over days against the sleep without the keep-alive.
+1. The battery cost, measured over days against the sleep without the keep-alive.
+2. More wake-ups from Home Assistant with the camera mounted at the door (one so far, on the bench), where the Wi-Fi signal is different.
 3. The two `poweron` wake-ups of 2026-11-24 that nobody caused (possibly the same failed SDIO setup after a wake-up).
 
 Every new coprocessor command needs a warning to the owner first; these five (`9a:04`, `05`, `07` with zeros, `2c`, `30`) were sent on 2026-11-24 with the owner's approval and silenced nothing.
