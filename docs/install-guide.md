@@ -18,6 +18,7 @@ Read [Before you start](#before-you-start) completely. **Flashing replaces the f
 | 11. Wake preview | The LCD preview after a front-button wake-up | Installed on one unit; **not checked yet** |
 | 12. PIR high | The factory app's highest PIR sensitivity (5) | Installed on one unit; every walk into the picture was seen |
 | 13. Night picture | The wake-up picture waits for night mode in the dark | Installed on one unit; an IR-lit picture after a real wake-up in the dark |
+| 14. Wake-up from the network | A server wakes the sleeping camera (live view on demand) | Installed on one unit on 2026-11-24; see [waking from the network](remote-wake.md) |
 
 One camera was used throughout. Other units, batches or firmware revisions are untested. See [known limits](known-limits.md) before relying on any of it.
 
@@ -332,6 +333,20 @@ python3 tools/upload-archive.py build/packages/stage13-night-wait.tar.gz "$DOORV
 cd /tmp/doorview-upload && sh install.sh .       # prints NIGHT_WAIT_INSTALLED
 echo night_wait_ms=4000 >> /etc/doorview/mqtt.conf
 ```
+
+## Step 19 (optional). Stage 14: the wake-up from the network
+
+Stage 14 (`stage14-remote-wake`) replaces `/etc/doorview/syslink_net_irq.ko` and `/etc/doorview/doorview-mqtt`. The driver gets a write-only `wifi` parameter for the coprocessor's keep-alive commands (`9a:04`, `05`, `07` without authentication, `2c`, `30`, each checked field by field) and tries its SDIO setup again instead of giving up, which a boot after a wake-up from the network needs (without it the coprocessor reset more than half of those boots). The daemon reads `wake_server=<IPv4>:<port>` and `wake_pattern=<12 hex digits>`: before every standby it arms the keep-alive to that server, and after a wake-up with the reason `wifi` it starts the live view (with `live=1`). Without the two keys nothing changes. Needs stage 13; the old files are kept as `<name>.before-remote`, and the old daemon ignores the keys. You also need a server that holds the connection and sends the pattern on request (the homelab's `doorview-wake`, see [waking from the network](remote-wake.md)), and a firewall that lets the camera reach it. Make a random pattern of your own (`openssl rand -hex 6`) and give the same one to the server.
+
+```sh
+tools/package.sh stage14-remote-wake
+python3 tools/upload-archive.py build/packages/stage14-remote-wake.tar.gz "$DOORVIEW_PW"
+# on the camera:
+cd /tmp/doorview-upload && sh install.sh .       # prints REMOTE_WAKE_INSTALLED
+printf 'wake_server=<server>:7967\nwake_pattern=<12 hex digits>\n' >> /etc/doorview/mqtt.conf
+```
+
+The new driver is loaded at the next start, so the first sleep after the install has no keep-alive; wake the camera once (a button) and it arms itself from then on.
 
 ## Verification checklist
 

@@ -86,6 +86,48 @@ static int parse_number(const char *text, int *value)
     return 1;
 }
 
+static int hex_digit(char c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+    return -1;
+}
+
+/* <address>:<port>, the port 1 to 65535. */
+static int parse_server(char *text, u32 *address, int *port)
+{
+    char *colon = text;
+
+    while (*colon && *colon != ':')
+        colon++;
+    if (!*colon)
+        return 0;
+    *colon = 0;
+    if (!parse_address(text, address) || !parse_number(colon + 1, port) || *port < 1 || *port > 65535)
+        return 0;
+    return 1;
+}
+
+/* Exactly 2 * WAKE_PATTERN_SIZE hex digits. */
+static int parse_pattern(const char *text, u8 *pattern)
+{
+    int index;
+
+    for (index = 0; index < WAKE_PATTERN_SIZE; index++) {
+        int high = hex_digit(text[2 * index]);
+        int low = high < 0 ? -1 : hex_digit(text[2 * index + 1]);
+
+        if (low < 0)
+            return 0;
+        pattern[index] = (u8)(high * 16 + low);
+    }
+    return text[2 * WAKE_PATTERN_SIZE] == 0;
+}
+
 static int load_config(const char *path)
 {
     char buffer[CONFIG_MAX];
@@ -122,6 +164,8 @@ static int load_config(const char *path)
     str_copy(cfg.reason_file, sizeof(cfg.reason_file), "/sys/module/syslink_poll/parameters/reason");
     str_copy(cfg.mcu_parameter, sizeof(cfg.mcu_parameter), "/sys/module/syslink_net/parameters/mcu");
     str_copy(cfg.standby_parameter, sizeof(cfg.standby_parameter), "/sys/module/syslink_net/parameters/standby");
+    str_copy(cfg.wifi_parameter, sizeof(cfg.wifi_parameter), "/sys/module/syslink_net/parameters/wifi");
+    cfg.wake_interval = 60;
     str_copy(cfg.stay_awake_file, sizeof(cfg.stay_awake_file), "/tmp/doorview-stay-awake");
     str_copy(cfg.node, sizeof(cfg.node), "front-door-camera");
     str_copy(cfg.name, sizeof(cfg.name), "Front door camera");
@@ -275,13 +319,25 @@ static int load_config(const char *path)
             if (!parse_number(value, &number) || number < 0 || number > 604800)
                 return -26;
             cfg.wake_timer = number;
+        } else if (str_eq(line, "wake_server")) {
+            if (!parse_server(value, &cfg.wake_address, &cfg.wake_port))
+                return -30;
+        } else if (str_eq(line, "wake_pattern")) {
+            if (!parse_pattern(value, cfg.wake_pattern))
+                return -31;
+            cfg.wake_pattern_set = 1;
+        } else if (str_eq(line, "wake_interval")) {
+            if (!parse_number(value, &number) || number < 10 || number > 3600)
+                return -32;
+            cfg.wake_interval = number;
         } else if (str_eq(line, "sleep_usb")) {
             cfg.sleep_usb = str_eq(value, "1");
         } else if (str_eq(line, "reason_file") || str_eq(line, "mcu_parameter") || str_eq(line, "standby_parameter") ||
-                   str_eq(line, "stay_awake_file")) {
+                   str_eq(line, "stay_awake_file") || str_eq(line, "wifi_parameter")) {
             char *target = str_eq(line, "reason_file")         ? cfg.reason_file
                            : str_eq(line, "mcu_parameter")     ? cfg.mcu_parameter
                            : str_eq(line, "standby_parameter") ? cfg.standby_parameter
+                           : str_eq(line, "wifi_parameter")    ? cfg.wifi_parameter
                                                                : cfg.stay_awake_file;
 
             if (!valid_path(value))
@@ -304,5 +360,7 @@ static int load_config(const char *path)
         return -28; /* a PIR alarm is reported as the motion entity */
     if (cfg.sleep_after && !cfg.snapshot)
         return -25; /* a wake-up is reported as motion with a snapshot */
+    if ((cfg.wake_port != 0) != (cfg.wake_pattern_set != 0) || (cfg.wake_port && !cfg.sleep_after))
+        return -33; /* a wake-up from the network needs both the server and the pattern, and the sleep */
     return have_host ? 0 : -8;
 }

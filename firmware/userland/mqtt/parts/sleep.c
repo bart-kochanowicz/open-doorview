@@ -9,6 +9,7 @@
 static u32 last_activity_ms;
 static u32 sleep_retry_ms;
 static int wake_pir_pending;
+static int wake_live_pending; /* a wake-up from the network: start the live view once connected */
 static int sleep_logged_skip;
 
 /* The syslink driver takes one coprocessor command at a time and answers a second one with EBUSY until the first is sent
@@ -60,6 +61,7 @@ static void read_wake_reason(void)
     text[o.length] = 0;
     logmsg(text);
     wake_pir_pending = str_eq(reason, "pir");
+    wake_live_pending = str_eq(reason, "wifi") && cfg.live;
 }
 
 /* A PIR wake-up (motion before Linux was up) or alarm (while awake) is a motion edge with a snapshot; one that arrives
@@ -155,6 +157,77 @@ static void pir_setup(void)
     sys_wait(-1, -1, 0, (int)SLEEP_PIR_SETTLE_MS);
 }
 
+/* The keep-alive packet that the coprocessor sends to the wake-up server at every interval. */
+#define WAKE_PACKET "doorview"
+#define WAKE_PACKET_SIZE 8
+#define WAKE_PATTERN_PAYLOAD 261
+#define WAKE_SERVERS_PAYLOAD 293
+
+/* One command for the wifi parameter: the command byte and the payload as hex digits, and a newline. */
+static void wifi_text(char *text, int command, const u8 *payload, int size)
+{
+    static const char digits[] = "0123456789abcdef";
+    int index;
+
+    text[0] = digits[command >> 4];
+    text[1] = digits[command & 15];
+    for (index = 0; index < size; index++) {
+        text[2 + 2 * index] = digits[payload[index] >> 4];
+        text[3 + 2 * index] = digits[payload[index] & 15];
+    }
+    text[2 + 2 * size] = '\n';
+    text[3 + 2 * size] = 0;
+}
+
+/*
+ * The factory firmware's keep-alive before a standby (docs/remote-wake.md): no authentication (07), the pattern (2c,
+ * the same in all four entries as the factory writes it: the coprocessor uses the fourth), one server with its
+ * interval and keep-alive packet (30), then the start (05). From the start on the coprocessor owns the camera's
+ * address, so this comes after the MQTT connection is closed.
+ */
+static int arm_wake(void)
+{
+    u8 payload[WAKE_SERVERS_PAYLOAD];
+    char text[2 * WAKE_SERVERS_PAYLOAD + 4];
+    int entry;
+    int index;
+
+    if (write_text(cfg.wifi_parameter, "07\n") < 0)
+        return -1;
+    for (index = 0; index < WAKE_PATTERN_PAYLOAD; index++)
+        payload[index] = 0;
+    payload[0] = 1;
+    for (entry = 0; entry < 4; entry++) {
+        for (index = 0; index < WAKE_PATTERN_SIZE; index++)
+            payload[1 + 65 * entry + index] = cfg.wake_pattern[index];
+        payload[1 + 65 * entry + 64] = WAKE_PATTERN_SIZE;
+    }
+    wifi_text(text, 0x2c, payload, WAKE_PATTERN_PAYLOAD);
+    if (write_text(cfg.wifi_parameter, text) < 0)
+        return -1;
+    for (index = 0; index < WAKE_SERVERS_PAYLOAD; index++)
+        payload[index] = 0;
+    payload[0] = 1; /* on */
+    payload[1] = 1; /* one server */
+    payload[2] = 1; /* the factory's threshold for one server */
+    payload[3] = (u8)(cfg.wake_interval & 0xff);
+    payload[4] = (u8)(cfg.wake_interval >> 8);
+    payload[5] = 1;
+    payload[6] = WAKE_PACKET_SIZE;
+    payload[7] = (u8)(cfg.wake_port & 0xff);
+    payload[8] = (u8)(cfg.wake_port >> 8);
+    payload[9] = (u8)(cfg.wake_address >> 24);
+    payload[10] = (u8)(cfg.wake_address >> 16);
+    payload[11] = (u8)(cfg.wake_address >> 8);
+    payload[12] = (u8)cfg.wake_address;
+    for (index = 0; index < WAKE_PACKET_SIZE; index++)
+        payload[13 + index] = (u8)WAKE_PACKET[index];
+    wifi_text(text, 0x30, payload, WAKE_SERVERS_PAYLOAD);
+    if (write_text(cfg.wifi_parameter, text) < 0)
+        return -1;
+    return write_text(cfg.wifi_parameter, "05\n");
+}
+
 /* The factory order: wake timer, PIR on, sync, then the driver sends 8a:77 07 and 9a:03 and answers the coprocessor's 0xa0.
  * The coprocessor wakes the SoC by its own timer, observed as every 5 minutes, unless it is told otherwise (wake_timer=0). */
 static void maybe_sleep(u32 now)
@@ -207,6 +280,13 @@ static void maybe_sleep(u32 now)
         return;
     }
     sys_wait(-1, -1, 0, (int)SLEEP_PIR_SETTLE_MS);
+    /* Without the keep-alive the camera still wakes by the PIR, the buttons and the timer. */
+    if (cfg.wake_port) {
+        if (arm_wake() < 0)
+            logmsg("wake-up from the network refused by the driver");
+        else
+            logmsg("wake-up from the network armed");
+    }
     sys_sync();
     if (write_text(cfg.standby_parameter, "1\n") < 0) {
         logmsg("sleep refused: cannot start the standby");

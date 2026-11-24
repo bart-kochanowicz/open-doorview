@@ -1,6 +1,6 @@
 # Waking the camera from the network
 
-The factory firmware's cloud can wake the sleeping camera for a live view. The same mechanism works without the cloud: while the SoC is off, the Wi-Fi coprocessor keeps a TCP connection to a server of our own, and an agreed 6-byte pattern sent on that connection makes it power the SoC on with the wake-up reason `wifi`. **Observed on the unit on 2026-11-24, from a test build of the network driver run from RAM; nothing of it is installed.** The dated record, with every attempt that did not work, is in the [work log](log.md#waking-from-the-network-2026-11-24).
+The factory firmware's cloud can wake the sleeping camera for a live view. The same mechanism works without the cloud: while the SoC is off, the Wi-Fi coprocessor keeps a TCP connection to a server of our own, and an agreed 6-byte pattern sent on that connection makes it power the SoC on with the wake-up reason `wifi`. **Observed on the unit on 2026-11-24, and installed there as stage 14 ([install guide, step 19](install-guide.md#step-19-optional-stage-14-the-wake-up-from-the-network)): the daemon arms the keep-alive before every standby, and ten wake-ups from the server in a row each brought the camera to the broker in 7.5 to 8.7 s.** Home Assistant cannot trigger the server yet. The dated record, with every attempt that did not work, is in the [work log](log.md#waking-from-the-network-2026-11-24).
 
 Evidence levels as elsewhere: **observed** (on the unit), **from the factory firmware** (read from the RTOS image), **from the coprocessor log** (its own UART, read passively), **assumption**.
 
@@ -49,20 +49,20 @@ When the SoC is on, the coprocessor stops the keep-alive and closes the connecti
 ## What was measured
 
 - From the server sending the pattern to the U-Boot banner: about 2 s; the coprocessor reads the pattern about 1 s after it was sent, not at the next keep-alive.
-- **To the camera on the broker: 7.5 to 8.8 s when the first boot works, 21.5 to 24 s when it does not.** In 4 of 7 network wake-ups on 2026-11-24 the coprocessor reset the first boot about 10 s after the link came up (`syslink beatheart error, reboot camera now!`, from its log) and the second boot (reason `poweron`) worked; that first boot printed its login prompt but never reached the broker and did not answer on the console. A PIR or button wake-up has not shown this. The cause is unknown; the kernel log of that boot is lost with the reset (the kernel runs `quiet`, so nothing reaches the console). The coprocessor's log of one such boot shows `msg create fail` and `net sendmsg err` right after it stopped the keep-alive.
+- **To the camera on the broker: 7.5 to 8.7 s** with stage 14 (ten in a row, one clean boot each; one more run gave 4.3 s, probably because the camera was already starting for another reason).
+- **The reset of the first boot, and its fix.** Before stage 14 the coprocessor reset the first boot after a network wake-up in more than half of the runs (`syslink beatheart error, reboot camera now!` about 10 s after the link came up) and only the second boot (reason `poweron`) worked, 21.5 to 24 s in all. A login into such a first boot before the reset showed why: the network driver's SDIO setup (`sdio_enable_func`, which waits for the function to report ready) failed right after the handshake driver handed over, and the driver gave up without a message, so no heartbeat ever reached the coprocessor. The coprocessor is still closing its keep-alive at that moment. Loading the driver again by hand 2 s later saved that boot. Since stage 14 the driver tries the setup up to 15 times, 200 ms apart, and logs each failure (`syslink_sdio: init attempt ... failed`); with it no reset was seen in ten wake-ups.
 - A server that closes the connection does not wake the camera (no `dropline` wake-up in four closes); the coprocessor reconnects about every 90 s. A server that cannot be reached at all made it give up after a few attempts until the next standby (observed once).
 - The battery cost of the keep-alive is not measured. The coprocessor wakes its radio at every interval to send the packet.
 - On a network wake-up the coprocessor closes the PIR (`HI_PIRMNG_ClosePir`); the daemon switches it on again before every standby.
 
 ## The test relay
 
-The server end runs next to the broker in the homelab (`doorview-wake`, TCP 7967 on the broker's address; only the camera's address may reach it). It logs what the camera sends and sends bytes only when asked on its pod-local control port. It has no MQTT client and no credentials yet.
+The server end runs next to the broker in the homelab (`doorview-wake`, TCP 7967 on the broker's address; only the camera's address may reach it). It logs what the camera sends and sends bytes only when asked on its pod-local control port (`wake <hex>` sends the pattern and closes the connection). It has no MQTT client and no credentials yet.
 
 ## What is still missing
 
-1. A stage that ships it: the network driver with the `wifi` parameter (branch `remote-wake-driver`), the daemon arming the keep-alive before every standby with the pattern from its configuration, and the daemon starting the live view after a `wifi` wake-up.
-2. The relay with an MQTT command from Home Assistant and a rate limit (a wake-up costs a boot and at least `sleep_after` seconds awake), and a button in Home Assistant.
-3. The battery cost, measured over days against the sleep without the keep-alive.
-4. The cause of the reset after more than half of the network wake-ups (capturing the kernel log of that first boot needs the console log level raised, which is a change of the boot arguments), and of the two `poweron` wake-ups of 2026-11-24 that nobody caused.
+1. The relay with an MQTT command from Home Assistant and a rate limit (a wake-up costs a boot, the live view and at least `sleep_after` seconds awake), and a button in Home Assistant.
+2. The battery cost, measured over days against the sleep without the keep-alive.
+3. The two `poweron` wake-ups of 2026-11-24 that nobody caused (possibly the same failed SDIO setup after a wake-up).
 
 Every new coprocessor command needs a warning to the owner first; these five (`9a:04`, `05`, `07` with zeros, `2c`, `30`) were sent on 2026-11-24 with the owner's approval and silenced nothing.
