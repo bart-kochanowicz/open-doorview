@@ -326,6 +326,148 @@ static int send_mcu_request(struct sdio_func *func, u8 *data)
 }
 
 /*
+ * One keep-alive command for the coprocessor's Wi-Fi part (0x9a), written as hex digits: the command byte and its
+ * payload. This is what the factory firmware sends before a standby so that a server can wake the camera
+ * (docs/remote-wake.md). Only these are accepted, each checked field by field:
+ *   0x04  stop the keep-alive, no payload                             "04"
+ *   0x05  start the keep-alive, no payload                            "05"
+ *   0x07  authentication: written as "07" alone, sent as 304 zero bytes (none; the factory's types 1 to 3 need a
+ *         vendor server)
+ *   0x2c  wake-up pattern, 261 bytes: on/off, then four entries of 64 pattern bytes and a length (at most 64)
+ *   0x30  keep-alive servers, 293 bytes: on/off, number of servers (1 to 4), wake line threshold, interval u16 LE,
+ *         then four entries of 72 bytes: enabled, packet length (at most 64), port u16 LE, IPv4, 64 packet bytes
+ */
+#define WIFI_PAYLOAD_MAX 304
+#define WIFI_AUTH_SIZE 304
+#define WIFI_PATTERN_SIZE 261
+#define WIFI_SERVERS_SIZE 293
+
+static DEFINE_MUTEX(wifi_lock);
+static u8 wifi_command;
+static u8 wifi_payload[WIFI_PAYLOAD_MAX];
+static unsigned int wifi_payload_size;
+static bool wifi_pending;
+
+static bool wifi_pattern_valid(const u8 *p)
+{
+    unsigned int i;
+
+    if (p[0] > 1)
+        return false;
+    for (i = 0; i < 4; i++)
+        if (p[1 + i * 65 + 64] > 64)
+            return false;
+    return true;
+}
+
+static bool wifi_servers_valid(const u8 *p)
+{
+    unsigned int i;
+
+    if (p[0] > 1 || p[1] < 1 || p[1] > 4 || p[2] < 1 || p[2] > p[1])
+        return false;
+    for (i = 0; i < 4; i++) {
+        const u8 *server = p + 5 + i * 72;
+
+        if (server[0] > 1 || server[1] > 64 || (i >= p[1] && server[0]))
+            return false;
+    }
+    return true;
+}
+
+static int wifi_set(const char *value, const struct kernel_param *param)
+{
+    u8 *raw;
+    unsigned int size;
+    size_t len = strlen(value);
+    int err = 0;
+
+    if (len && value[len - 1] == '\n')
+        len--;
+    if (len < 2 || len % 2 || len > 2 * (1 + WIFI_SERVERS_SIZE))
+        return -EINVAL;
+    size = len / 2 - 1;
+    raw = kzalloc(1 + WIFI_PAYLOAD_MAX, GFP_KERNEL);
+    if (!raw)
+        return -ENOMEM;
+    if (hex2bin(raw, value, 1 + size)) {
+        err = -EINVAL;
+        goto out;
+    }
+    switch (raw[0]) {
+    case 0x04:
+    case 0x05:
+        if (size)
+            err = -EINVAL;
+        break;
+    case 0x07:
+        if (size)
+            err = -EINVAL;
+        size = WIFI_AUTH_SIZE;
+        break;
+    case 0x2c:
+        if (size != WIFI_PATTERN_SIZE || !wifi_pattern_valid(raw + 1))
+            err = -EINVAL;
+        break;
+    case 0x30:
+        if (size != WIFI_SERVERS_SIZE || !wifi_servers_valid(raw + 1))
+            err = -EINVAL;
+        break;
+    default:
+        err = -EPERM;
+    }
+    if (err)
+        goto out;
+
+    mutex_lock(&wifi_lock);
+    if (wifi_pending) {
+        err = -EBUSY;
+    } else {
+        wifi_command = raw[0];
+        memcpy(wifi_payload, raw + 1, size);
+        wifi_payload_size = size;
+        wifi_pending = true;
+    }
+    mutex_unlock(&wifi_lock);
+out:
+    kfree(raw);
+    return err;
+}
+
+static const struct kernel_param_ops wifi_ops = { .set = wifi_set };
+module_param_cb(wifi, &wifi_ops, NULL, 0200);
+
+static int send_wifi_request(struct sdio_func *func, u8 *data)
+{
+    static const u8 header[40] = { [0] = 0x31,  [16] = 0x01, [20] = 0x03, [21] = 0xb0, [22] = 0xa0,
+                                   [23] = 0x20, [32] = 0x9a, [34] = 0x01, [35] = 0x01 };
+    unsigned int size, length;
+    int err;
+
+    mutex_lock(&wifi_lock);
+    if (!wifi_pending) {
+        mutex_unlock(&wifi_lock);
+        return 0;
+    }
+    size = wifi_payload_size;
+    memcpy(data, header, sizeof(header));
+    /* Bytes 28 and 38 start two little-endian u16 lengths (the factory's syslink framing). */
+    length = 8 + size;
+    data[28] = data[38] = length & 0xff;
+    data[29] = data[39] = length >> 8;
+    data[33] = wifi_command;
+    memcpy(data + sizeof(header), wifi_payload, size);
+    wifi_pending = false;
+    mutex_unlock(&wifi_lock);
+
+    err = sdio_writesb(func, 0, data, sizeof(header) + size);
+    if (!err)
+        pr_info("doorview: wifi command=%02x length=%u sent\n", data[33], size);
+    /* A failed write is not repeated, as for the mcu parameter. */
+    return err;
+}
+
+/*
  * The factory standby, step by step (docs/factory-firmware.md): 8a:77 07, then 9a:03,
  * then the answer 8a:61 01 00 00 00 when the coprocessor asks with 0xa0. Writing 1 to
  * "standby" starts it once; the coprocessor then switches the SoC off, so sync first.
@@ -461,6 +603,9 @@ static const struct net_device_ops doorview_ops = { .ndo_start_xmit = doorview_x
                                                     .ndo_validate_addr = eth_validate_addr };
 static bool resume_connected;
 module_param(resume_connected, bool, 0400);
+/* Logs every frame that is neither Ethernet nor an application message, for tracing the coprocessor. */
+static bool log_frames;
+module_param(log_frames, bool, 0600);
 
 static int syslink_worker(void *arg)
 {
@@ -569,6 +714,9 @@ static int syslink_worker(void *arg)
             if (header == 0x0004 || header == 0x0804)
                 ethernet_frames++;
             received_ethernet = header == 0x0004 || header == 0x0804;
+            if (log_frames && !received_ethernet && !(header == 0x0034 && count >= 40 && data[32] == 0x8a))
+                pr_info_ratelimited("doorview_frame: header=%04x count=%u data=%*ph\n", header, count,
+                                    (int)min_t(unsigned int, count, 48), data);
             if (header == 0x0034 && count >= 40 && data[32] == 0x8a) {
                 unsigned int length = data[38] | (data[39] << 8);
 
@@ -581,6 +729,12 @@ static int syslink_worker(void *arg)
                     pr_info("doorview_power: command=%02x count=%u length=%u head=%*ph payload=%*ph\n", data[33], count,
                             length, 8, data + 32, (int)shown, data + 40);
                 }
+            }
+            if (header == 0x0034 && count >= 40 && data[32] == 0x9a) {
+                unsigned int shown = min_t(unsigned int, count - 40, 32);
+
+                pr_info("doorview_wifi: command=%02x count=%u length=%u payload=%*ph\n", data[33], count,
+                        data[38] | (data[39] << 8), (int)shown, data + 40);
             }
             if ((header == 0x0004 || header == 0x0804) && count >= 16 && netif_running(netdev)) {
                 unsigned int length = count - 2;
@@ -687,6 +841,8 @@ static int syslink_worker(void *arg)
             err = send_station_request(func, data);
             if (!err)
                 err = send_mcu_request(func, data);
+            if (!err)
+                err = send_wifi_request(func, data);
             if (!err)
                 err = send_standby_request(func, data);
             if (err) {
