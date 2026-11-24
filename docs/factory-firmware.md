@@ -177,7 +177,7 @@ The open questions:
 - The two early resets that every software reboot showed.
 - Whether the coprocessor behaves the same with our timing.
 
-A wake-up from Home Assistant needs our own keep-alive server instead of the cloud's; it worked from RAM on 2026-11-24 ([waking from the network](remote-wake.md)).
+A wake-up from Home Assistant needs our own keep-alive server instead of the cloud's; it works since stage 14 and the homelab relay (2026-11-24, [waking from the network](remote-wake.md)).
 
 **B. The factory image without the cloud.** We would keep the RTOS, the quick start and `hi_ivp`, and replace the Tuya calls with a small client for our broker. The power cycle and the detector would then be the original ones. The obstacles:
 

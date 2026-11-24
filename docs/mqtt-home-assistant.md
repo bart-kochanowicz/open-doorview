@@ -143,7 +143,7 @@ If the camera is still running 30 s later it logs that, reconnects, and does not
 
 **Wake-up.** The reason the coprocessor gave is in `/sys/module/syslink_poll/parameters/reason` (`reason_file=`). For `pir` the daemon publishes motion `ON` and one snapshot as soon as it is connected, so the existing Home Assistant automations (notification, archive, person detection) run unchanged; wait for the picture with `snapshot_delay_ms=1500`, because the first frame after a start can be dark. Other reasons (`poweron`, `key`, `timer`...) only start the idle count. **A press of the front button that wakes the camera is consumed by the coprocessor: the LCD preview does not start for that press.**
 
-While the camera sleeps, every entity of the device is unavailable in Home Assistant (the camera is offline; the retained battery value is kept by the broker but not by the entities). Nothing can wake it from Home Assistant yet: the live view needs an awake camera. With stage 14 and `wake_server`/`wake_pattern` a server can wake it ([waking from the network](remote-wake.md)); Home Assistant does not trigger that server yet.
+While the camera sleeps, every entity of the device is unavailable in Home Assistant (the camera is offline; the retained battery value is kept by the broker but not by the entities). Only stage 14 lets Home Assistant wake it: with `wake_server`/`wake_pattern` the homelab relay wakes the camera when the live view is switched on (`live/set` `ON`) while it sleeps, and the live view then starts by itself ([waking from the network](remote-wake.md#the-relay)).
 
 ## How it works
 

@@ -37,7 +37,7 @@ Read this before trusting any part of the project. It says what is true now; the
 - DHCP, automatic Wi-Fi reconnect (an optional watchdog exists, off, and its recovery step is unproven), WPA3, open networks, 5 GHz, SSIDs or passphrases over 31 bytes. Stages 1 and 2 set only the on-link route; stage 3 adds the default route from `gateway=` in `mqtt.conf`.
 - Signal strength and access-point information (the factory command exists; it was never sent because new commands to the coprocessor are risky).
 - TLS for MQTT.
-- **Waking the camera from Home Assistant.** With stage 14 a server can wake the sleeping camera (7.5 to 8.7 s to the broker, ten in a row on 2026-11-24), and the live view starts by itself; Home Assistant has no button for it yet, and the battery cost of the keep-alive is not measured ([waking from the network](remote-wake.md)).
+- **Waking the camera from Home Assistant.** With stage 14 a server can wake the sleeping camera (7.5 to 8.7 s to the broker, ten in a row on 2026-11-24), and the live view starts by itself; Start in Home Assistant's live view triggers it (once observed, 8 s to the broker); the battery cost of the keep-alive is not measured ([waking from the network](remote-wake.md)).
 - Audio, the speaker and microphone, the battery fuel gauge beyond the coprocessor's value.
 - Over-the-air update, and anything that survives a re-flash.
 
