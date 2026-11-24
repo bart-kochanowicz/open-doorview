@@ -24,7 +24,7 @@ This repository holds the recovery procedures and the custom firmware layer for 
 | Path | What it is |
 |---|---|
 | `README.md`, `docs/install-guide.md` | what works and the end-to-end install |
-| `docs/` | procedures (`flash-layout.md`, `uart-pinout.md`, `openipc-flash.md`), hardware notes (`wifi-companion.md`, `factory-firmware.md`, `lcd-and-button.md`, `mqtt-home-assistant.md`, `night-vision.md`), `troubleshooting.md`, `known-limits.md` (the current state), `log.md` (the dated observations), `building.md`, `first-snap.md` |
+| `docs/` | procedures (`flash-layout.md`, `uart-pinout.md`, `openipc-flash.md`), hardware notes (`wifi-companion.md`, `factory-firmware.md`, `lcd-and-button.md`, `mqtt-home-assistant.md`, `night-vision.md`, `remote-wake.md`), `troubleshooting.md`, `known-limits.md` (the current state), `log.md` (the dated observations), `building.md`, `first-snap.md` |
 | `firmware/stage1-wifi`, `stage2-lcd`, `stage3-mqtt`, `stage4-sleep`, `stage5-sleep-daemon`, `stage6-wake-timer`, `stage7-pir-motion`, `stage8-fast-boot`, `stage9-lean`, `stage10-early-daemon`, `stage11-wake-preview`, `stage12-pir-high`, `stage13-night-wait` | installable packages: installer, rollback, payload, tests. The stages form a chain; later installers pin the exact files of earlier ones by SHA-256 |
 | `firmware/kernel/` | source of the current kernel modules, one directory per module; the earlier stage revisions are built from git history (`OLD_SOURCES_COMMIT` in `tools/pins.sh`) |
 | `firmware/userland/` | LCD/button programs, the MQTT daemon (`mqtt/doorview-mqtt.c` includes `mqtt/parts/*.c` by topic, one translation unit) and `capture/first-snap.c` (a measurement prototype; on the unit it crashes in `GK_API_SYS_Init`) |
@@ -66,14 +66,15 @@ Private material lives **outside** the repository (flash dumps, overlay backups,
 ## Next work (in a sensible order)
 
 1. **Measure the battery in sleep mode:** a day or more on the battery, with the wake-ups, the awake time and the last known battery value from Home Assistant. This decides whether more work on the power cycle is needed.
-2. **Observe the sleep cycle over days:** false PIR wake-ups, missed visitors, the person detector's answers (collect real positives to tune its thresholds), Wi-Fi stalls during the short awake windows.
-3. **Faster first picture:** Majestic needs about 3 s from its start to the first picture at a cold start (1.33 s at a warm restart). `firmware/userland/capture/first-snap.c` is that minimal capture program (run from RAM on 2026-11-23: it crashes inside `GK_API_SYS_Init`; `docs/first-snap.md` has the RAM-only measurement and what decides the next step); the live view would then need another source.
-4. **Front button while asleep:** the press that wakes the camera does not start the LCD preview (the coprocessor consumes it). Stage 11 starts the preview after a `wifikey` wake-up; installed on 2026-11-23, a front-button wake-up has not been checked yet.
-5. Wi-Fi health: find the cause of the data-path stalls (driver, SDIO link or coprocessor; see `docs/wifi-companion.md`). `wifi_reboot` recovers; `wifi_watchdog` (a reconnect) is unproven and off.
-6. The cause of the early-boot resets after a software reboot (two before every successful one; a cold start from the coprocessor does not have them).
-7. Signal strength and access-point info (needs the RSSI query `0x28`, a new coprocessor command: warn first).
-8. Battery: confirm the capacity scale and the meaning of status 2 by observing a discharge and a full charge.
-9. Close the gaps in `docs/known-limits.md`: the unrecorded first-flash method, the lost source of the shipped `syslink_bg.ko`, non-reproducible LCD binaries, a licence file, mDNS on 5353.
+2. **Wake-up from Home Assistant (live view on demand):** the coprocessor holds a connection to a server while the camera sleeps and wakes it on a 6-byte pattern (worked from RAM on 2026-11-24, `docs/remote-wake.md`). Next: a stage with the driver's `wifi` parameter (branch `remote-wake-driver`) and a daemon that arms the keep-alive before every standby and starts the live view after a `wifi` wake-up; the relay with an MQTT command and a rate limit; the battery cost; the reset of the first boot after more than half of the network wake-ups.
+3. **Observe the sleep cycle over days:** false PIR wake-ups, missed visitors, the person detector's answers (collect real positives to tune its thresholds), Wi-Fi stalls during the short awake windows.
+4. **Faster first picture:** Majestic needs about 3 s from its start to the first picture at a cold start (1.33 s at a warm restart). `firmware/userland/capture/first-snap.c` is that minimal capture program (run from RAM on 2026-11-23: it crashes inside `GK_API_SYS_Init`; `docs/first-snap.md` has the RAM-only measurement and what decides the next step); the live view would then need another source.
+5. **Front button while asleep:** the press that wakes the camera does not start the LCD preview (the coprocessor consumes it). Stage 11 starts the preview after a `wifikey` wake-up; installed on 2026-11-23, a front-button wake-up has not been checked yet.
+6. Wi-Fi health: find the cause of the data-path stalls (driver, SDIO link or coprocessor; see `docs/wifi-companion.md`). `wifi_reboot` recovers; `wifi_watchdog` (a reconnect) is unproven and off.
+7. The cause of the early-boot resets after a software reboot (two before every successful one; a cold start from the coprocessor does not have them).
+8. Signal strength and access-point info (needs the RSSI query `0x28`, a new coprocessor command: warn first).
+9. Battery: confirm the capacity scale and the meaning of status 2 by observing a discharge and a full charge.
+10. Close the gaps in `docs/known-limits.md`: the unrecorded first-flash method, the lost source of the shipped `syslink_bg.ko`, non-reproducible LCD binaries, a licence file, mDNS on 5353.
 
 Every new coprocessor command needs a warning to the owner first (the recovery from a silent coprocessor or a sleeping SoC is the power button); never send `8a:7e` with a non-zero value. Do NOT create a second web account or open the camera's port 80 to Home Assistant: the web interface had no roles and every account was a root-equivalent administrator.
 

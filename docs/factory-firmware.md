@@ -74,12 +74,13 @@ A synchronous request waits for a reply with the same channel and command + 1 (`
 | `0x03` | none | **system standby**: the SoC is about to be switched off |
 | `0x04`, `0x05` | none | stop, start the server keep-alive |
 | `0x06` | none | ultra-deep sleep (`HI_MCUCTRL_SystemClose`, everything off) |
-| `0x07` | 304 bytes | keep-alive server authentication |
+| `0x07` | 304 bytes | keep-alive authentication request: on/off, type (0 none, 3 Tuya), length, data |
+| `0x08` | 302 bytes | keep-alive authentication data (the answer to the server's challenge; Tuya only) |
 | `0x20`, `0x21` | 136 bytes, none | soft AP start, stop |
 | `0x22`, `0x23`, `0x24`, `0x26` | | station start, stop, connect, disconnect (`0x22` to `0x24` are used by our driver) |
 | `0x28` | none, sync, 4-byte answer | signal strength |
 | `0x2a` | 1 byte | scan |
-| `0x2c` | 261 bytes | wake-up packet pattern (`HAL_WIFI_SetNetPattern`) |
+| `0x2c` | 261 bytes | wake-up packet pattern (`HAL_WIFI_SetNetPattern`); see [waking from the network](remote-wake.md) |
 | `0x30` | 293 bytes | keep-alive server parameters (`HAL_WIFI_SetKeepAlive`) |
 
 ### Messages from the coprocessor (from the factory firmware, dispatch table at `0x40537ee4`)
@@ -148,25 +149,9 @@ When the coprocessor powers the SoC on, the first exchange on the two wake-up GP
 
 ## Waking the camera from the network (from the factory firmware)
 
-The factory firmware can be woken by its cloud while the SoC is off. Before standby, `HAL_WIFI_SetKeepAlive` (`0x40148e40`) and `HAL_WIFI_SetNetPattern` (`0x40148c74`) give the coprocessor two things:
+The factory firmware can be woken by its cloud while the SoC is off. Before standby, `HI_HAL_WIFI_STAStandby` (`0x40149138`) sends the authentication request (`9a:07`, through `HI_PDT_SYSTEM_SetKeepaliveAuth`), the wake-up pattern (`9a:2c`, `HAL_WIFI_SetNetPattern` at `0x40148c74`, taken from the Tuya SDK's "wakeup data"), the servers (`9a:30`, `HAL_WIFI_SetKeepAlive` at `0x40148e40`: the Tuya low-power server on port 443, an interval of 60 s, the SDK's keep-alive packet) and starts the keep-alive (`9a:05`); for the Tuya type it then answers the server's challenge (`9a:08`, `HI_PDT_SYSTEM_DoSvrKeepaliveAuth`). The firmware also handles the types "none", "ycc" and "tange", and its test shell has `wifi start keepalive`, which sends only `9a:2c` (empty), `9a:30` (a test server `192.168.3.104:5321`, 30 s, no packet) and `9a:05`.
 
-**`9a:30`, keep-alive servers (293 bytes):**
-
-| Offset | Size | Meaning |
-|---|---|---|
-| 0 | 1 | 1 = keep-alive on |
-| 1 | 1 | number of servers, 1 to 4 |
-| 2 | 1 | "wake line threshold": `servers / 2 + 1`; meaning not known |
-| 3 | 2 | interval, little endian (30 if the cloud gives none; assumed seconds) |
-| 5 + 72 × i | 1 | server *i* enabled |
-| 6 + 72 × i | 1 | length of its keep-alive packet, up to 64 |
-| 7 + 72 × i | 2 | server port |
-| 9 + 72 × i | 4 | server IPv4 address (as the factory firmware's address-to-text call reads it; byte order assumed network order) |
-| 13 + 72 × i | 64 | the keep-alive packet |
-
-**`9a:2c`, wake-up pattern (261 bytes):** byte 0 = 1, then four entries of 64 pattern bytes plus one length byte. The factory firmware writes the same pattern, taken from the cloud SDK, into all four entries.
-
-`9a:05` then starts the keep-alive, and `9a:07` (304 bytes) authenticates to the server, which the factory firmware does only for its own cloud. The coprocessor has its own TCP/IP stack (`tcpip_init` in its log). **Assumption:** it keeps the connection open while the SoC is off, sends the keep-alive packet at each interval, and wakes the SoC with the reason `wifi` when a received packet matches the pattern. If that holds, a small TCP server on the home network could replace the cloud: Home Assistant would ask it to send the pattern, and the camera would wake for a live view.
+**Observed on 2026-11-24:** without authentication, with a server of our own, the coprocessor keeps the connection while the SoC is off and wakes it with the reason `wifi` on a 6-byte pattern. The payloads, the coprocessor's view from its log and the measurements are in [waking from the network](remote-wake.md). One correction to the layout read from this firmware: the coprocessor takes the pattern from the fourth of the four entries in `9a:2c`, which the factory firmware fills with the same pattern as the other three.
 
 ## Battery scale (from the coprocessor log)
 
@@ -192,7 +177,7 @@ The open questions:
 - The two early resets that every software reboot showed.
 - Whether the coprocessor behaves the same with our timing.
 
-A wake-up from Home Assistant would need our own keep-alive server instead of the cloud's (formats above; untested).
+A wake-up from Home Assistant needs our own keep-alive server instead of the cloud's; it worked from RAM on 2026-11-24 ([waking from the network](remote-wake.md)).
 
 **B. The factory image without the cloud.** We would keep the RTOS, the quick start and `hi_ivp`, and replace the Tuya calls with a small client for our broker. The power cycle and the detector would then be the original ones. The obstacles:
 
@@ -204,6 +189,6 @@ A wake-up from Home Assistant would need our own keep-alive server instead of th
 ## Not established
 
 - The detection range at each sensitivity level and the cool-down between alarms. The levels the app sends are 1, 3 and 5 (see the command table); on the unit, level 1 reacted only to a hand about 5 cm from the lens, level 3 to a person about 1 m away during a wake-up but not while awake, and level 5 to every walk into the picture while awake (2026-11-23). Values 2 and 4 are never sent by the factory firmware.
-- The payloads of `0x65` and `0x7c`; the "wake line threshold" and the units of the keep-alive interval; whether the keep-alive works without the `9a:07` authentication.
-- How long the coprocessor waits for the `0x61` answer, and whether it keeps the Wi-Fi association during standby (it did not here, see below). The first part is settled: **observed on 2026-11-23** the coprocessor switches the SoC off after `8a:77 07`, `9a:03` and the `8a:61 01 00 00 00` answer, without any keep-alive (`9a:30`/`9a:2c`/`9a:05` were not sent); PIR and timer were off. The UART went silent, the MQTT connection timed out, and nothing woke the SoC for over a minute. It woke after the power button was pressed: the boot frame carried `poweron`, the boot was clean on the first attempt (none of the early-boot resets of a software reboot), Majestic started 11.4 s after the U-Boot banner, and **MQTT was back 33 s after it**, about 21 s after Majestic started, because after a power cycle the coprocessor had to connect to the access point again (our driver also waits 12 s between the station start and connect). Not tested: a wake-up by the PIR, the key or the timer (the shipped `syslink_poll` accepts only `poweron`), the battery current while asleep, and a sleep longer than a few minutes.
+- The payloads of `0x65` and `0x7c`; the "wake line threshold" (one server, threshold 1, was observed).
+- How long the coprocessor waits for the `0x61` answer, and whether it keeps the Wi-Fi association during standby without a keep-alive (it did not after the power-button wake-up below; with a keep-alive it does, see [waking from the network](remote-wake.md)). The first part is settled: **observed on 2026-11-23** the coprocessor switches the SoC off after `8a:77 07`, `9a:03` and the `8a:61 01 00 00 00` answer, without any keep-alive (`9a:30`/`9a:2c`/`9a:05` were not sent); PIR and timer were off. The UART went silent, the MQTT connection timed out, and nothing woke the SoC for over a minute. It woke after the power button was pressed: the boot frame carried `poweron`, the boot was clean on the first attempt (none of the early-boot resets of a software reboot), Majestic started 11.4 s after the U-Boot banner, and **MQTT was back 33 s after it**, about 21 s after Majestic started, because after a power cycle the coprocessor had to connect to the access point again (our driver also waits 12 s between the station start and connect). Not tested: a wake-up by the PIR, the key or the timer (the shipped `syslink_poll` accepts only `poweron`), the battery current while asleep, and a sleep longer than a few minutes.
 - Whether the factory power-cycle order is the same on other coprocessor firmware versions (one unit, `3.2.23`).
