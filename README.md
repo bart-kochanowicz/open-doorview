@@ -17,7 +17,7 @@ Developed and tested on **one** RH-PD10 (Goke GK7202V300, 8 MiB SPI NOR, GC2053 
 | Night vision (IR-cut filter and IR LEDs) | works through Majestic with one GPIO (8); after a wake-up in the dark night mode comes within about 3 s and the wake-up picture waits for it (stage 13), see [night vision](docs/night-vision.md) |
 | RTSP and the web interface | possible (stages 1 to 3), but **switched off on the unit** for start-up time and security; the web interface is an administrator interface with no roles |
 | Front button lights the LCD with a 30 s live preview | works while the camera is awake; after a front-button wake-up (stage 11) installed, not checked yet |
-| Waking the sleeping camera from Home Assistant (live view on demand) | **prototype**: the coprocessor holds a connection to a server while the camera sleeps and wakes it on a 6-byte pattern, about 8 s to the broker, 22 to 24 s when the first boot is reset (from RAM, 2026-11-24); no stage ships it yet, see [waking from the network](docs/remote-wake.md) |
+| Waking the sleeping camera from Home Assistant (live view on demand) | works from the server (stage 14): the coprocessor holds a connection to it while the camera sleeps and wakes it on a 6-byte pattern, 7.5 to 8.7 s to the broker, and the live view starts by itself; **no button in Home Assistant yet**, see [waking from the network](docs/remote-wake.md) |
 | Battery, USB and button as MQTT/Home Assistant entities | works (stage 3 and later); while the camera sleeps they are unavailable, the homelab keeps the last battery reading |
 
 What is **not** done or not known (battery life in sleep mode, battery scale, PIR range, audio, DHCP, reconnect and more) is in [known limits](docs/known-limits.md), and the dated observations behind every claim are in the [work log](docs/log.md). Please read the known limits before you flash.
@@ -34,7 +34,7 @@ What is **not** done or not known (battery life in sleep mode, battery scale, PI
 | Path | Contents |
 |---|---|
 | `docs/` | install guide, hardware notes, procedures, known limits, work log |
-| `firmware/stage1-wifi`, `stage2-lcd`, `stage3-mqtt`, `stage4-sleep`, `stage5-sleep-daemon`, `stage6-wake-timer`, `stage7-pir-motion`, `stage8-fast-boot`, `stage9-lean`, `stage10-early-daemon`, `stage11-wake-preview`, `stage12-pir-high`, `stage13-night-wait` | installable packages: installer, rollback, payload, tests ([overview](firmware/README.md)) |
+| `firmware/stage1-wifi`, `stage2-lcd`, `stage3-mqtt`, `stage4-sleep`, `stage5-sleep-daemon`, `stage6-wake-timer`, `stage7-pir-motion`, `stage8-fast-boot`, `stage9-lean`, `stage10-early-daemon`, `stage11-wake-preview`, `stage12-pir-high`, `stage13-night-wait`, `stage14-remote-wake` | installable packages: installer, rollback, payload, tests ([overview](firmware/README.md)) |
 | `firmware/kernel/` | source of the SDIO/Wi-Fi kernel modules |
 | `firmware/userland/` | LCD and button programs, the MQTT daemon (split by topic in `mqtt/parts/`), the `first-snap` prototype |
 | `tools/` | host-side helpers: UART upload and backup, Wi-Fi configuration, JFFS2 reader, build, formatting and packaging scripts |

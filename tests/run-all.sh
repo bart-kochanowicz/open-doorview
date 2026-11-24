@@ -12,7 +12,7 @@ run() {
     fi
 }
 
-# Every stage, in order (stage1-wifi, stage2-lcd, ..., stage13-night-wait).
+# Every stage, in order (stage1-wifi, stage2-lcd, ..., stage14-remote-wake).
 for suite in $(cd "$here" && ls -d firmware/stage*/tests/run-tests.sh | sort -V); do
     run "$suite"
 done

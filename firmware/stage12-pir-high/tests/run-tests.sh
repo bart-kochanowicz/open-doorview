@@ -107,7 +107,7 @@ echo '== the files =='
 check 'the old daemon is the file the installer pins' test "$(digest "$old_daemon")" = eebdb3b36b8532cbeeae2639069e83e1628b317aca1cfbbf80aea3a0762c7471
 check 'the old driver is the file the installer pins' test "$(digest "$old_driver")" = 5a35ec4dd560094eaa55023ea49514b52c9e6d2364d50d485f035df0d504d2ec
 check 'the new daemon is the build recorded in EXPECTED-BUILDS.txt' grep -q "^$(digest "$here/payload/etc/doorview/doorview-mqtt")  doorview-mqtt-stage12 " "$here/../EXPECTED-BUILDS.txt"
-check 'the new driver is the build recorded in EXPECTED-BUILDS.txt' grep -q "^$(digest "$here/payload/etc/doorview/syslink_net_irq.ko")  syslink_net_irq.ko " "$here/../EXPECTED-BUILDS.txt"
+check 'the new driver is the build recorded in EXPECTED-BUILDS.txt' grep -q "^$(digest "$here/payload/etc/doorview/syslink_net_irq.ko")  syslink_net_irq-stage12.ko " "$here/../EXPECTED-BUILDS.txt"
 
 echo '== install.sh =='
 
