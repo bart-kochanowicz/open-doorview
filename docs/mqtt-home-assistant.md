@@ -143,7 +143,7 @@ If the camera is still running 30 s later it logs that, reconnects, and does not
 
 **Wake-up.** The reason the coprocessor gave is in `/sys/module/syslink_poll/parameters/reason` (`reason_file=`). For `pir` the daemon publishes motion `ON` and one snapshot as soon as it is connected, so the existing Home Assistant automations (notification, archive, person detection) run unchanged; wait for the picture with `snapshot_delay_ms=1500`, because the first frame after a start can be dark. Other reasons (`poweron`, `key`, `timer`...) only start the idle count. **A press of the front button that wakes the camera is consumed by the coprocessor: the LCD preview does not start for that press.**
 
-While the camera sleeps, every entity of the device is unavailable in Home Assistant (the camera is offline; the retained battery value is kept by the broker but not by the entities). Nothing can wake it from Home Assistant yet: the live view needs an awake camera.
+While the camera sleeps, every entity of the device is unavailable in Home Assistant (the camera is offline; the retained battery value is kept by the broker but not by the entities). Nothing can wake it from Home Assistant yet: the live view needs an awake camera. Waking it from a server worked from RAM on 2026-11-24 but is not part of any stage yet ([waking from the network](remote-wake.md)).
 
 ## How it works
 
